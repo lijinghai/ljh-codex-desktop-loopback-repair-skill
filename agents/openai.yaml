@@ -1,9 +1,4 @@
-﻿# Author: 算个文科生吧
-# Contact: lijinghailjh@163.com
-# Project: ljh_codex-desktop-loopback-repair_skill
-
 interface:
   display_name: "Codex Desktop Loopback Repair"
-  short_description: "Diagnose and repair Codex Desktop loopback proxy issues"
-  default_prompt: "Use $ljh-codex-desktop-loopback-repair-skill to diagnose Codex Desktop reconnecting or stream disconnected errors on Windows."
-
+  short_description: "Repair Codex Desktop Windows loopback proxy failures"
+  default_prompt: "Use $ljh-codex-desktop-loopback-repair-skill to diagnose and repair Codex Desktop reconnecting or stream disconnected errors on Windows, especially AppContainer loopback, sandbox WFP rules, portproxy 7897 to 15721, and Clash port conflicts."
