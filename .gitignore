@@ -1,0 +1,24 @@
+﻿# Author: 算个文科生吧
+# Contact: lijinghailjh@163.com
+# Project: ljh_codex-desktop-loopback-repair_skill
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs / temp
+*.log
+*.tmp
+*.bak
+
+# Local Codex/runtime files
+.codex/
+

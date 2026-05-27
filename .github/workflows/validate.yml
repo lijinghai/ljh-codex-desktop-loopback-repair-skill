@@ -1,0 +1,27 @@
+﻿# Author: 算个文科生吧
+# Contact: lijinghailjh@163.com
+# Project: ljh_codex-desktop-loopback-repair_skill
+
+name: Validate Skill
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Validate skill
+        run: python scripts/validate_skill.py .
+

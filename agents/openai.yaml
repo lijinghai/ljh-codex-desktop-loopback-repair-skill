@@ -1,0 +1,9 @@
+﻿# Author: 算个文科生吧
+# Contact: lijinghailjh@163.com
+# Project: ljh_codex-desktop-loopback-repair_skill
+
+interface:
+  display_name: "Codex Desktop Loopback Repair"
+  short_description: "Diagnose and repair Codex Desktop loopback proxy issues"
+  default_prompt: "Use $ljh-codex-desktop-loopback-repair-skill to diagnose Codex Desktop reconnecting or stream disconnected errors on Windows."
+
