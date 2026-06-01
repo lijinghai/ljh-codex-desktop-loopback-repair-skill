@@ -1,16 +1,13 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 chcp 65001 >nul 2>&1
 
 cd /d "%~dp0"
 
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":8765 .*LISTENING" 2^>nul') do (
-    set PID=%%a
-    if not "!PID!"=="" (
-        echo Stopping old server PID !PID!...
-        taskkill /PID !PID! /F >nul 2>&1
-        timeout /t 1 /nobreak >nul
-    )
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8765.*LISTENING" 2^>nul') do (
+    echo Stopping old server PID %%a...
+    taskkill /PID %%a /F >nul 2>&1
+    timeout /t 1 /nobreak >nul
 )
 
 echo ============================================
