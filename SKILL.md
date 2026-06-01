@@ -192,20 +192,35 @@ Expected: a JSON response with model output (e.g., `"Hi! How can I help?"`), NOT
 
 When Codex reports `413 Payload Too Large: Request body too large. Maximum allowed: 10 MB`:
 
-**Root cause**: The conversation context (system prompt + tool definitions + conversation history + file contents) exceeds CC-Switch's 10 MB request body limit. CC-Switch IS reachable — the request is just too big.
+**Root cause**: The conversation context (system prompt + tool definitions + conversation history + file contents) exceeds the upstream API's 10 MB request body limit. The 413 comes from the upstream provider (not CC-Switch itself) — check CC-Switch `/status` for `"上游错误 (状态码 413)"`. CC-Switch IS reachable and working; the request body is just too large for the model API.
 
-**Fix options** (in priority order):
-
-1. **Start a new Codex conversation** — This resets the conversation context to near-zero. Old sessions are archived automatically.
-2. **Archive large sessions manually** — Move old `.jsonl` files from `$env:USERPROFILE\.codex\sessions\` to reduce what Codex loads.
-3. **Check for runaway context** — If Codex read very large files or had many tool-call rounds, the accumulated context can exceed 10 MB quickly. Start fresh.
+**Auto-Fix**:
 
 ```powershell
-# Check session sizes to identify large contexts
-Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Sort-Object Length -Descending | Select-Object -First 5 Length, Name
+# 1. Stop Codex
+Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force
+
+# 2. Find the culprit — sessions over 5 MB
+Write-Host "=== Large sessions ==="
+Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Where-Object { $_.Length -gt 5MB } | Sort-Object Length -Descending | Select-Object Length, Name
+
+# 3. Archive today's sessions to clear context
+$today = Get-Date -Format "yyyy\MM\dd"
+$src = "$env:USERPROFILE\.codex\sessions\$today"
+if (Test-Path $src) {
+    Move-Item "$src\*.jsonl" "$env:USERPROFILE\.codex\archived_sessions\" -Force
+    Write-Host "Archived today's sessions — context cleared"
+}
+
+# 4. Verify empty
+Get-ChildItem "$env:USERPROFILE\.codex\sessions\$today" -ErrorAction SilentlyContinue
 ```
 
-Note: The 413 error is NOT a sandbox/network issue. If CC-Switch `/status` returns healthy and test requests work, but Codex shows 413, the fix is clearing conversation context — not changing sandbox or network settings.
+After archiving, start Codex fresh. The new conversation will have near-zero context.
+
+**Prevention**: If a conversation accumulates many tool calls or reads large files, context can exceed 10 MB quickly. Start a new conversation periodically for long-running tasks.
+
+Note: The 413 error is NOT a sandbox/network issue. If CC-Switch `/status` returns healthy and test requests work, but Codex shows 413, the fix is archiving sessions — not changing sandbox or network settings.
 
 ## Strategy B: Elevated Sandbox + Portproxy (Legacy)
 

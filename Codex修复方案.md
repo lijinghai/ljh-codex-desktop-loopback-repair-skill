@@ -134,20 +134,37 @@ curl -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: applicatio
 
 ## 413 Payload Too Large 修复
 
-**根因**：Codex 会话上下文（系统提示 + 工具定义 + 对话历史 + 文件内容）超过 CC-Switch 的 10 MB 请求体限制。**CC-Switch 是可以连通的**，只是请求体太大被拒绝。
+**根因**：Codex 会话上下文（系统提示 + 工具定义 + 对话历史 + 文件内容）超过上游 API 的 10 MB 请求体限制。413 错误来自上游供应商（不是 CC-Switch 本身）—— 检查 CC-Switch `/status` 会看到 `"上游错误 (状态码 413)"`。**CC-Switch 是可以连通的**，只是请求体太大被上游拒绝。
 
-### 解决方法
-
-1. **开新会话** — 在 Codex 中开始一个新对话，上下文清零。这是最快最可靠的方法。
-2. **清理大会话文件** — 查看哪些会话占用大：
+### 自动修复
 
 ```powershell
-Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Sort-Object Length -Descending | Select-Object -First 5 Length, Name
+# 1. 关闭 Codex
+Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force
+
+# 2. 找出大于 5 MB 的会话
+Write-Host "=== 大会话文件 ==="
+Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Where-Object { $_.Length -gt 5MB } | Sort-Object Length -Descending | Select-Object Length, Name
+
+# 3. 归档今天的会话，清零上下文
+$today = Get-Date -Format "yyyy\MM\dd"
+$src = "$env:USERPROFILE\.codex\sessions\$today"
+if (Test-Path $src) {
+    Move-Item "$src\*.jsonl" "$env:USERPROFILE\.codex\archived_sessions\" -Force
+    Write-Host "已归档今天的会话 — 上下文已清零"
+}
+
+# 4. 确认已清空
+Get-ChildItem "$env:USERPROFILE\.codex\sessions\$today" -ErrorAction SilentlyContinue
 ```
 
-3. **避免超大上下文** — 如果一次对话中有大量工具调用或读取了大文件，上下文会快速增长超过 10 MB。
+归档后启动 Codex，新会话上下文从零开始。
 
-**注意**：413 不是沙箱/网络问题。如果 CC-Switch `/status` 正常且测试请求可以通过，但 Codex 报 413，那就是上下文太大的问题。不需要改 sandbox 或网络设置。
+### 预防
+
+如果一次对话中有大量工具调用或读取了大文件，上下文会快速增长超过 10 MB。长时间任务建议定期开新会话。
+
+**注意**：413 不是沙箱/网络问题。如果 CC-Switch `/status` 正常且测试请求可以通过，但 Codex 报 413，那就是上下文太大，需要归档会话文件——不要改 sandbox 或网络设置。
 
 ---
 
