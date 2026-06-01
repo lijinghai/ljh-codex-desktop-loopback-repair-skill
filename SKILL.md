@@ -20,6 +20,8 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **CC-Switch credential loss** — CC-Switch can lose its provider credentials after a crash or restart, resulting in `"No credentials for provider: openai"` or `"current_provider":null`. CC-Switch auto-recovers from backup within 30-60 seconds. If not, it needs a manual restart.
 
+**CRITICAL: CC-Switch Live Takeover writes `sandbox = "elevated"`** — This is the ROOT CAUSE of recurring failures. Every time CC-Switch restarts (crash, reboot, manual restart), it writes `sandbox = "elevated"` into `config.toml`, undoing any manual fix. The permanent solution requires a **sandbox guard** that monitors `config.toml` and auto-corrects sandbox back to `"unelevated"` whenever CC-Switch changes it.
+
 ## Quick Auto-Fix Flow
 
 When invoked, follow this priority order. Stop at the first step that resolves the issue:
@@ -176,7 +178,13 @@ if ($path) {
 #### 4c. Verify CC-Switch Forwards Requests
 
 ```powershell
-curl.exe -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}' --max-time 15 2>$null | Select-Object -Last 1
+$body = @{
+    model = "gpt-5.5"
+    input = @(@{ role = "user"; content = "hi" })
+    max_output_tokens = 10
+} | ConvertTo-Json -Depth 5 -Compress
+
+Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 15 | ConvertTo-Json -Depth 5 -Compress
 ```
 
 Expected: a JSON response with model output (e.g., `"Hi! How can I help?"`), NOT a `proxy_error`.
@@ -187,6 +195,41 @@ Expected: a JSON response with model output (e.g., `"Hi! How can I help?"`), NOT
 2. **Then**: Start Codex Desktop
 3. **Wait**: CC-Switch Live Takeover will update Codex config within seconds, writing `base_url` back to `15721` and `experimental_bearer_token = "PROXY_MANAGED"` — this is expected and correct
 4. **Verify**: Codex should connect without reconnecting errors
+
+### Step 5b: Install Sandbox Guard (Permanent Fix)
+
+CC-Switch Live Takeover will revert `sandbox` back to `"elevated"` every time it restarts. The guard script prevents this permanently.
+
+**Install the guard:**
+
+```powershell
+# Copy guard scripts to .codex
+Copy-Item "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts\sandbox-guard.ps1" "$env:USERPROFILE\.codex\sandbox-guard.ps1" -Force
+Copy-Item "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts\sandbox-guard.vbs" "$env:USERPROFILE\.codex\sandbox-guard.vbs" -Force
+
+# Add to Startup folder (runs hidden at every login)
+Copy-Item "$env:USERPROFILE\.codex\sandbox-guard.vbs" "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\sandbox-guard.vbs" -Force
+
+# Start the guard now
+Start-Process powershell.exe -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File', "$env:USERPROFILE\.codex\sandbox-guard.ps1" -WindowStyle Hidden
+
+Write-Host "Sandbox Guard installed and running"
+```
+
+**How it works:**
+- Waits 30 seconds after startup (let CC-Switch finish its writes)
+- Checks `config.toml` every 10 seconds
+- If `sandbox = "elevated"` is detected, auto-fixes to `"unelevated"`
+- Logs all fixes to `$env:USERPROFILE\.codex\sandbox-guard.log`
+- Runs hidden at every Windows login via Startup folder
+
+**Alternative: One-click launcher (`start-codex.bat`)**
+
+```powershell
+Copy-Item "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts\start-codex.bat" "$env:USERPROFILE\.codex\start-codex.bat" -Force
+```
+
+This batch file starts everything in correct order: CC-Switch → wait → fix sandbox → check sessions → launch Codex. Use it instead of clicking the Codex icon.
 
 ### Step 6: 413 Payload Too Large Fix
 
@@ -207,8 +250,10 @@ Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Wh
 # 3. Archive today's sessions to clear context
 $today = Get-Date -Format "yyyy\MM\dd"
 $src = "$env:USERPROFILE\.codex\sessions\$today"
+$archive = "$env:USERPROFILE\.codex\archived_sessions"
 if (Test-Path $src) {
-    Move-Item "$src\*.jsonl" "$env:USERPROFILE\.codex\archived_sessions\" -Force
+    New-Item -ItemType Directory -Force -Path $archive | Out-Null
+    Get-ChildItem $src -Filter "*.jsonl" -File | Move-Item -Destination $archive -Force
     Write-Host "Archived today's sessions — context cleared"
 }
 
@@ -287,7 +332,12 @@ curl.exe -s http://127.0.0.1:15721/status --max-time 5 | Select-Object -Last 1
 
 # 3. CC-Switch forwards requests
 Write-Host "=== API Test ===" 
-curl.exe -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}' --max-time 15 | Select-Object -Last 1
+$body = @{
+    model = "gpt-5.5"
+    input = @(@{ role = "user"; content = "hi" })
+    max_output_tokens = 10
+} | ConvertTo-Json -Depth 5 -Compress
+Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 15 | ConvertTo-Json -Depth 5 -Compress
 
 # 4. Loopback exemption exists
 Write-Host "=== Loopback ===" 
