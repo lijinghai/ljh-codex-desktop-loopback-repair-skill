@@ -14,7 +14,7 @@ Codex Desktop (Windows Store / MSIX) runs in a sandbox. When `sandbox = "elevate
 
 This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base_url to 15721 → Codex can't connect → Reconnecting loop.
 
-**The fix**: use `sandbox = "unelevated"` so the main Codex process is not subject to WFP port filtering, allowing it to reach CC-Switch on 15721 directly. No portproxy needed.
+**The fix**: use `sandbox = "unelevated"` so the main Codex process is not subject to WFP port filtering, allowing it to reach CC-Switch on 15721 directly. **However, Codex Desktop (v26.x) hardcodes port 7897 as its proxy port**, so a portproxy from 7897→15721 is still required even with unelevated sandbox. The unelevated sandbox simply ensures the portproxy itself isn't blocked by WFP.
 
 **413 Payload Too Large** — when Codex conversation context grows too large (many tool calls, large file reads, long history), the request body can exceed CC-Switch's 10 MB limit. This is a separate issue from the sandbox deadlock — CC-Switch is reachable but rejects the oversized request. Fix: start a new Codex conversation to reset context, or clean up large sessions.
 
@@ -60,7 +60,7 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | Finding | Meaning | Action |
 |---|---|---|
 | `sandbox = "elevated"` | WFP blocks 15721, deadlock with CC-Switch | Go to Step 3 (Strategy A) |
-| `sandbox = "unelevated"` | WFP not blocking main process | Skip to Step 4 (CC-Switch check) |
+| `sandbox = "unelevated"` | WFP not blocking main process | Skip to Step 3e (portproxy check) |
 | CC-Switch `/status` returns `"running":true` with valid provider | Backend is healthy | Skip to Step 5 |
 | CC-Switch `/status` shows `"current_provider":null` | Provider lost | Go to Step 4a (CC-Switch Recovery) |
 | CC-Switch `/status` shows `"No credentials"` in last_error | Credential loss after crash | Go to Step 4a (CC-Switch Recovery) |
@@ -69,7 +69,8 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | `experimental_bearer_token = "PROXY_MANAGED"` | CC-Switch Live Takeover active | Do NOT change base_url; use Strategy A |
 | Error contains `413 Payload Too Large` | Request body > 10 MB | Go to Step 6 (Context too large) |
 | Loopback exemption missing | AppContainer isolation blocks loopback | Go to Step 3d |
-| Portproxy `7897→15721` exists | Legacy Strategy B artifact | Can be cleaned (Step 3e) |
+| Portproxy `7897→15721` missing | Codex can't reach CC-Switch | Add portproxy (Step 3e) |
+| Portproxy `7897→15721` exists | Essential routing in place | Keep it |
 | CC-Switch reports `"连接失败"` but curl can reach upstream | `HTTP_PROXY` env var poisoning outbound | Go to Step 4d (Remove HTTP_PROXY) |
 
 ### Step 3: Strategy A — Unelevated Sandbox (Primary Fix)
@@ -117,12 +118,14 @@ net user CodexSandboxOffline /delete 2>$null
 net user CodexSandboxOnline /delete 2>$null
 ```
 
-#### 3e. Clean Up Legacy Portproxy (Optional)
+#### 3e. Ensure Portproxy 7897→15721 (Essential)
 
-If `netsh interface portproxy show all` shows `7897 → 15721`, this is a legacy Strategy B artifact. With unelevated sandbox, Codex connects directly to 15721, so portproxy is unnecessary. Remove it to keep things clean:
+Codex Desktop (v26.x) hardcodes port 7897 as its proxy port. Even with unelevated sandbox, the portproxy is required to forward 7897→15721 (where CC-Switch listens).
 
 ```powershell
+# Delete old rule first (in case of corruption), then add fresh
 netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1
+netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 connectport=15721 connectaddress=127.0.0.1
 ```
 
 ### Step 4: CC-Switch Health Check
@@ -376,29 +379,29 @@ Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -Conte
 Write-Host "=== Loopback ===" 
 CheckNetIsolation LoopbackExempt -s | Select-String 'codex'
 
-# 5. No portproxy (Strategy A) or portproxy present (Strategy B)
+# 5. Portproxy is present (REQUIRED — Codex uses port 7897)
 Write-Host "=== Portproxy ===" 
 netsh interface portproxy show all
 ```
 
 ### Success Criteria
 
-| Check | Strategy A Expected | Strategy B Expected |
-|---|---|---|
-| sandbox | `"unelevated"` | `"elevated"` |
-| base_url | `http://127.0.0.1:15721/v1` | `http://127.0.0.1:7897/v1` |
-| CC-Switch `/status` | `"running":true`, provider not null | Same |
-| API test | Model response, no `proxy_error` | Same (via 7897) |
-| Loopback | Codex package listed | Same |
-| Portproxy | Empty (or cleaned) | `7897 → 15721` |
-| Codex behavior | No reconnecting, no 413 | Same |
+| Check | Expected |
+|---|---|
+| sandbox | `"unelevated"` |
+| base_url | `http://127.0.0.1:15721/v1` |
+| CC-Switch `/status` | `"running":true`, provider not null |
+| API test | Model response via 7897 or 15721, no `proxy_error` |
+| Loopback | Codex package listed |
+| Portproxy | `7897 → 15721` present |
+| Codex behavior | No reconnecting, no 413 |
 
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
 | Codex reconnecting, sandbox=elevated | WFP blocking 15721 | Strategy A: switch to unelevated |
-| Codex reconnecting, sandbox=unelevated | CC-Switch provider null or down | CC-Switch Recovery (Step 4a) |
+| Codex reconnecting, sandbox=unelevated | Portproxy 7897→15721 missing, or CC-Switch provider null/down | Ensure portproxy (Step 3e); if still fails, CC-Switch Recovery (Step 4a) |
 | `413 Payload Too Large` | Conversation context > 10 MB | Start new conversation (Step 6) |
 | `413` persists after new chat | Old sessions loading large context | Archive old sessions (Step 6) |
 | CC-Switch `/status` works but API fails | CC-Switch provider has no active targets | Check CC-Switch GUI → provider → targets |
@@ -407,11 +410,11 @@ netsh interface portproxy show all
 | CC-Switch `/status` shows `"current_provider":null` | Provider configuration lost | Wait 30-60s; if not recovered, restart CC-Switch |
 | `base_url` keeps reverting to 15721 | CC-Switch Live Takeover active | Normal behavior; use Strategy A |
 | Codex updated, loopback exemption lost | PackageFullName changed | Re-run Step 3c with new package name |
-| Portproxy disappeared after reboot | IP Helper service issue | Re-run B3; check IP Helper service |
+| Portproxy disappeared after reboot | IP Helper service issue | Re-run Step 3e; check IP Helper service |
 | Sandbox rules keep reappearing | Codex recreates on launch | Expected; clean while Codex is stopped |
 | Codex was working, suddenly reconnects | CC-Switch crashed and lost provider | Check CC-Switch `/status`; run Step 4a |
 | CC-Switch shows provider but `active_targets:[]` | Targets not loaded or configured | Wait 30s; if still empty, check CC-Switch GUI |
-| `error sending request for url (http://127.0.0.1:7897/...)` | Portproxy deleted or IP Helper stopped | Re-run B3; check `services.msc` → IP Helper |
+| `error sending request for url (http://127.0.0.1:7897/...)` | Portproxy deleted or IP Helper stopped | Re-run Step 3e; check `services.msc` → IP Helper |
 | Codex uses `codex/cx/gpt-5.5` as model name | CC-Switch rewrote model field | Normal — CC-Switch prefixes provider-scoped model names |
 | All requests fail with 400 "No credentials" | CC-Switch lost API keys | CC-Switch Recovery (Step 4a); if persistent, re-enter keys in CC-Switch GUI |
 | CC-Switch restarted but `/status` still shows errors | CC-Switch needs more time for auto-recovery | Wait 30-60s, re-check; CC-Switch recovers Live config from backup |
@@ -465,7 +468,7 @@ If CC-Switch repeatedly shows `"current_provider":null` after restarts:
 - Keep unrelated Codex config intact — only change `sandbox` mode
 - Resolve the current Codex `PackageFullName` dynamically — never hard-code it
 - Delete only known Codex sandbox rules or exact sandbox user names
-- Do NOT fight CC-Switch's `base_url` — use Strategy A instead
+- Codex Desktop (v26.x) hardcodes port 7897 as proxy port — portproxy 7897→15721 is essential even with unelevated sandbox
 - CC-Switch Live Takeover writes `base_url = "http://127.0.0.1:15721/v1"` and `experimental_bearer_token = "PROXY_MANAGED"` — this is NORMAL, don't revert it
 - Some repair commands require Administrator PowerShell
 - Codex Store updates change `PackageFullName` — re-run loopback exemption after updates

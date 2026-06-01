@@ -86,7 +86,7 @@ function Get-RepairStatus {
     try {
         $portproxy = @(netsh interface portproxy show all 2>$null | ForEach-Object { $_.ToString() })
     } catch {}
-    $hasLegacyPortproxy = (($portproxy -join "`n") -match '127\.0\.0\.1\s+7897\s+127\.0\.0\.1\s+15721')
+    $hasPortproxy = (($portproxy -join "`n") -match '127\.0\.0\.1\s+7897\s+127\.0\.0\.1\s+15721')
 
     $largeSessions = @()
     $sessionRoot = Join-Path $env:USERPROFILE ".codex\sessions"
@@ -109,7 +109,7 @@ function Get-RepairStatus {
         lastError = $lastError
         loopback = $loopback
         hasLoopback = ($loopback.Count -gt 0)
-        hasLegacyPortproxy = $hasLegacyPortproxy
+        hasPortproxy = $hasPortproxy
         largeSessions = $largeSessions
         guardInstalled = (Test-Path (Join-Path $env:USERPROFILE ".codex\sandbox-guard.ps1"))
         guardRunning = [bool](Get-WmiObject Win32_Process -Filter "name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*sandbox-guard*' })
@@ -224,7 +224,8 @@ function Repair-Codex {
         net user CodexSandboxOffline /delete 2>$null | Out-Null
         net user CodexSandboxOnline /delete 2>$null | Out-Null
         netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1 | Out-Null
-        Add-Log $log "Cleaned Codex sandbox firewall rules, sandbox users, and legacy portproxy."
+        netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 connectport=15721 connectaddress=127.0.0.1 | Out-Null
+        Add-Log $log "Cleaned Codex sandbox firewall rules and sandbox users. Ensured portproxy 7897->15721."
     } else {
         Add-Log $log "Not running as Administrator; skipped firewall/user/portproxy cleanup."
     }

@@ -198,7 +198,7 @@
           <div class="item"><span class="label">base_url</span><span id="baseUrl" class="value">检查中</span></div>
           <div class="item"><span class="label">Loopback 豁免</span><span id="loopback" class="value">检查中</span></div>
           <div class="item"><span class="label">Sandbox 守护</span><span id="guard" class="value">检查中</span></div>
-          <div class="item"><span class="label">旧 portproxy</span><span id="portproxy" class="value">检查中</span></div>
+          <div class="item"><span class="label">Portproxy 7897→15721</span><span id="portproxy" class="value">检查中</span></div>
           <div class="item"><span class="label">大会话文件</span><span id="sessions" class="value">检查中</span></div>
           <div class="item"><span class="label">提供商</span><span id="provider" class="value">检查中</span></div>
         </div>
@@ -208,7 +208,7 @@
           <button id="launcherBtn" type="button">安装一键启动器</button>
           <button id="openBtn" type="button">打开 Codex</button>
         </div>
-        <p class="note" id="adminNote">如果以管理员方式启动本控制台，会额外清理防火墙规则、沙箱用户和旧 portproxy。</p>
+        <p class="note" id="adminNote">如果以管理员方式启动本控制台，会额外清理防火墙规则、沙箱用户，并确保 portproxy 7897→15721 存在。</p>
       </section>
 
       <section>
@@ -260,8 +260,8 @@
         : '未安装，建议安装',
         data.guardRunning ? 'good' : (data.guardInstalled ? 'warn' : 'warn'));
 
-      setValue('portproxy', data.hasLegacyPortproxy ? '存在 7897 -> 15721' : '无残留',
-        data.hasLegacyPortproxy ? 'warn' : 'good');
+      setValue('portproxy', data.hasPortproxy ? '7897→15721' : '缺失，需要修复',
+        data.hasPortproxy ? 'good' : 'bad');
 
       const sc = data.largeSessions;
       setValue('sessions', sc && sc.length
@@ -273,8 +273,8 @@
         ? data.provider : '未知', data.ccSwitchHealthy ? 'good' : 'warn');
 
       $('adminNote').textContent = data.isAdmin
-        ? '当前已用管理员权限运行：可清理防火墙规则、沙箱用户和旧 portproxy。'
-        : '当前不是管理员权限：会修复主要配置；防火墙规则、沙箱用户和旧 portproxy 会跳过。建议以管理员运行以完整修复。';
+        ? '当前已用管理员权限运行：可清理防火墙规则、沙箱用户，并确保 portproxy 7897→15721。'
+        : '当前不是管理员权限：会修复主要配置；防火墙规则、沙箱用户和 portproxy 会跳过。建议以管理员运行以完整修复。';
     }
 
     async function request(path, method = 'GET') {
