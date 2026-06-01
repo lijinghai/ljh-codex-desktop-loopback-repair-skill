@@ -1,7 +1,7 @@
 ---
 # 算个文科生吧，联系方式WX：RabbitRobot2025
 name: ljh-codex-desktop-loopback-repair-skill
-description: Diagnose and repair Codex Desktop for Windows reconnecting, stream disconnected, or local API proxy failures. Fixes AppContainer loopback isolation, Codex sandbox WFP port blocking, CC-Switch Live Takeover config conflicts, sandbox users, and netsh portproxy issues. 修复 Windows 上 Codex Desktop 一直重连、流断开、本地 127.0.0.1 代理不可达等问题。优先使用 unelevated 沙箱策略，简单可靠。
+description: Diagnose and repair Codex Desktop for Windows reconnecting, stream disconnected, 413 Payload Too Large, or local API proxy failures. Fixes AppContainer loopback isolation, Codex sandbox WFP port blocking, CC-Switch Live Takeover config conflicts, CC-Switch credential loss and crash recovery, sandbox users, and netsh portproxy cleanup. 修复 Windows 上 Codex Desktop 一直重连、流断开、413 请求体过大、本地 127.0.0.1 代理不可达等问题。优先使用 unelevated 沙箱策略，简单可靠。
 ---
 
 # Codex Desktop Loopback Repair
@@ -12,127 +12,83 @@ Codex Desktop (Windows Store / MSIX) runs in a sandbox. When `sandbox = "elevate
 
 **CC-Switch Live Takeover** — if CC-Switch is in use, it automatically manages Codex's `config.toml`, writing `base_url = "http://127.0.0.1:15721/v1"` and `experimental_bearer_token = "PROXY_MANAGED"`. Any manual `base_url` change will be reverted by CC-Switch within seconds.
 
-This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base_url to 15721 → Codex can't connect.
+This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base_url to 15721 → Codex can't connect → Reconnecting loop.
 
 **The fix**: use `sandbox = "unelevated"` so the main Codex process is not subject to WFP port filtering, allowing it to reach CC-Switch on 15721 directly. No portproxy needed.
 
-## Quick Diagnosis
+**413 Payload Too Large** — when Codex conversation context grows too large (many tool calls, large file reads, long history), the request body can exceed CC-Switch's 10 MB limit. This is a separate issue from the sandbox deadlock — CC-Switch is reachable but rejects the oversized request. Fix: start a new Codex conversation to reset context, or clean up large sessions.
 
-Run these and report findings before deciding the strategy.
+**CC-Switch credential loss** — CC-Switch can lose its provider credentials after a crash or restart, resulting in `"No credentials for provider: openai"` or `"current_provider":null`. CC-Switch auto-recovers from backup within 30-60 seconds. If not, it needs a manual restart.
 
-Non-admin checks (run first):
+## Quick Auto-Fix Flow
 
-```powershell
-# 1. Current config
-Get-Content "$env:USERPROFILE\.codex\config.toml" -ErrorAction SilentlyContinue | Select-String 'sandbox|base_url'
+When invoked, follow this priority order. Stop at the first step that resolves the issue:
 
-# 2. WFP port restrictions in sandbox log
-Get-Content "$env:USERPROFILE\.codex\.sandbox\sandbox.log" -ErrorAction SilentlyContinue | Select-String 'RemotePorts'
-
-# 3. CC-Switch status
-curl.exe http://127.0.0.1:15721/status --max-time 5 2>$null | Select-Object -Last 1
-
-# 4. Codex package identity
-Get-AppxPackage -Name '*OpenAI*' | Select-Object Name, PackageFullName
-```
-
-Admin checks (require elevated PowerShell):
-
-```powershell
-# 5. Loopback exemptions
-CheckNetIsolation LoopbackExempt -s | Select-String 'codex|openai'
-
-# 6. Sandbox firewall rules
-netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_tcp"
-netsh advfirewall firewall show rule name="codex_sandbox_offline_block_outbound"
-
-# 7. Sandbox users exist?
-net user CodexSandboxOffline 2>&1 | Select-Object -First 1
-net user CodexSandboxOnline 2>&1 | Select-Object -First 1
-
-# 8. Existing portproxy
-netsh interface portproxy show all
-```
-
-**Interpreting results:**
-
-| Finding | Meaning |
-| --- | --- |
-| `sandbox = "elevated"` | WFP rules active — main fix target |
-| `sandbox = "unelevated"` | WFP rules exist but don't block main process |
-| `RemotePorts=1-7896,7898-65535` | Only port 7897 is allowed through sandbox |
-| CC-Switch `/status` returns `"running":true` | Backend proxy is alive |
-| CC-Switch `/status` shows `"current_provider":null` | Provider lost — need CC-Switch recovery |
-| CC-Switch `/status` returns connection refused | CC-Switch is down — start it first |
-| `experimental_bearer_token = "PROXY_MANAGED"` in config | CC-Switch Live Takeover is active |
-
-## Repair Strategy Selector
-
-After diagnosis, pick one:
-
-### Strategy A: `sandbox = "unelevated"` (Recommended)
-
-Use when CC-Switch Live Takeover is active (config has `PROXY_MANAGED`). Simple, no portproxy needed, no conflict with CC-Switch.
-
-- Pro: CC-Switch keeps managing base_url, no conflict
-- Pro: No portproxy to maintain
-- Con: slightly reduced sandbox security (read-ACL-only mode)
-
-### Strategy B: `sandbox = "elevated"` + Portproxy (Legacy)
-
-Use only when elevated sandbox is strictly required AND CC-Switch Live Takeover is NOT active.
-
-- Con: CC-Switch will fight your base_url changes
-- Con: Portproxy must survive reboots and IP Helper service restarts
-- Con: More admin commands needed
-
-## Strategy A: Unelevated Sandbox Repair
-
-### A1. Stop Codex Desktop
+### Step 1: Stop Codex
 
 ```powershell
 Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force
 ```
 
-### A2. Back Up And Patch Config
+### Step 2: Diagnose
+
+Run these and report findings:
+
+```powershell
+# A. Current sandbox mode and base_url
+Get-Content "$env:USERPROFILE\.codex\config.toml" -ErrorAction SilentlyContinue | Select-String 'sandbox|base_url|experimental_bearer_token'
+
+# B. CC-Switch status
+curl.exe -s http://127.0.0.1:15721/status --max-time 5 2>$null | Select-Object -Last 1
+
+# C. Loopback exemption
+CheckNetIsolation LoopbackExempt -s | Select-String 'codex|openai'
+
+# D. Portproxy
+netsh interface portproxy show all
+
+# E. Sandbox firewall rules (admin)
+netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_tcp" 2>&1
+```
+
+**Interpretation table:**
+
+| Finding | Meaning | Action |
+|---|---|---|
+| `sandbox = "elevated"` | WFP blocks 15721, deadlock with CC-Switch | Go to Step 3 (Strategy A) |
+| `sandbox = "unelevated"` | WFP not blocking main process | Skip to Step 4 (CC-Switch check) |
+| CC-Switch `/status` returns `"running":true` with valid provider | Backend is healthy | Skip to Step 5 |
+| CC-Switch `/status` shows `"current_provider":null` | Provider lost | Go to Step 4a (CC-Switch Recovery) |
+| CC-Switch `/status` shows `"No credentials"` in last_error | Credential loss after crash | Go to Step 4a (CC-Switch Recovery) |
+| CC-Switch `/status` connection refused | CC-Switch not running | Go to Step 4b (Start CC-Switch) |
+| CC-Switch `/status` shows `active_targets:[]` | No targets configured | Check CC-Switch GUI |
+| `experimental_bearer_token = "PROXY_MANAGED"` | CC-Switch Live Takeover active | Do NOT change base_url; use Strategy A |
+| Error contains `413 Payload Too Large` | Request body > 10 MB | Go to Step 6 (Context too large) |
+| Loopback exemption missing | AppContainer isolation blocks loopback | Go to Step 3d |
+| Portproxy `7897→15721` exists | Legacy Strategy B artifact | Can be cleaned (Step 3e) |
+
+### Step 3: Strategy A — Unelevated Sandbox (Primary Fix)
+
+Apply when `sandbox = "elevated"` OR the deadlock is suspected.
+
+#### 3a. Back Up Config
 
 ```powershell
 Copy-Item "$env:USERPROFILE\.codex\config.toml" "$env:USERPROFILE\.codex\config.toml.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
 ```
 
-Change ONLY the sandbox mode. Do NOT touch base_url — CC-Switch manages it:
+#### 3b. Patch Config — Change ONLY sandbox mode
+
+Change `sandbox = "elevated"` to `sandbox = "unelevated"` in `$env:USERPROFILE\.codex\config.toml`.
+
+**CRITICAL**: Do NOT touch `base_url` or `experimental_bearer_token` — CC-Switch manages these. Keep ALL other settings intact.
 
 ```toml
 [windows]
 sandbox = "unelevated"   # was "elevated"
 ```
 
-Keep ALL other settings intact, especially `base_url` and `experimental_bearer_token` that CC-Switch wrote.
-
-### A3. Ensure CC-Switch Is Running And Has Provider
-
-```powershell
-$status = curl.exe http://127.0.0.1:15721/status --max-time 5 2>$null | Select-Object -Last 1
-Write-Host $status
-```
-
-If CC-Switch is not running, start it (path varies, common locations):
-- `%LOCALAPPDATA%\com.ccswitch.desktop\cc-switch.exe`
-- Custom install path like `F:\CC\cc-switch.exe`
-
-If status shows `"current_provider":null`, CC-Switch needs to recover its Live configuration. Try:
-1. Wait 30 seconds — CC-Switch auto-recovers from backup on startup
-2. If still null after waiting, CC-Switch may need manual reconfiguration via its GUI
-
-Verify CC-Switch can forward requests:
-
-```powershell
-curl.exe -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}' --max-time 15 2>$null | Select-Object -Last 1
-```
-
-Expected: a JSON response with model output, NOT a `proxy_error`.
-
-### A4. Add AppContainer Loopback Exemption *(Admin)*
+#### 3c. Add AppContainer Loopback Exemption (Admin)
 
 Resolve the current package name dynamically (Codex updates change it):
 
@@ -141,41 +97,127 @@ $pkg = (Get-AppxPackage -Name '*OpenAI*').PackageFullName
 if ($pkg) { CheckNetIsolation LoopbackExempt -a -n="$pkg" }
 ```
 
-### A5. Clean Sandbox State *(Admin)*
+#### 3d. Clean Sandbox State (Admin)
 
 Delete firewall rules and sandbox users while Codex is stopped. Codex will recreate them on next launch, but with `sandbox = "unelevated"` they only apply to sandbox worker processes, not the main Codex process making API calls.
 
 ```powershell
-# Delete sandbox firewall rules
-netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_tcp"
-netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_udp"
-netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_outbound"
+# Delete sandbox firewall rules (may already be deleted — that's fine)
+netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_tcp" 2>$null
+netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_udp" 2>$null
+netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_outbound" 2>$null
 
-# Delete sandbox users (Codex recreates them on launch — expected)
-net user CodexSandboxOffline /delete
-net user CodexSandboxOnline /delete
+# Delete sandbox users (Codex recreates on launch — expected)
+net user CodexSandboxOffline /delete 2>$null
+net user CodexSandboxOnline /delete 2>$null
 ```
 
-### A6. Start In Order
+#### 3e. Clean Up Legacy Portproxy (Optional)
 
-1. **First**: CC-Switch must be running with a valid provider (verified in A3)
+If `netsh interface portproxy show all` shows `7897 → 15721`, this is a legacy Strategy B artifact. With unelevated sandbox, Codex connects directly to 15721, so portproxy is unnecessary. Remove it to keep things clean:
+
+```powershell
+netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1
+```
+
+### Step 4: CC-Switch Health Check
+
+CC-Switch must be running with a valid provider before starting Codex.
+
+#### 4a. CC-Switch Recovery (Provider/Credential Loss)
+
+If CC-Switch `/status` shows `"current_provider":null` or `"No credentials for provider"`:
+
+1. **Wait 30-60 seconds** — CC-Switch auto-recovers Live configuration from backup on startup. Check `/status` again.
+2. **If still broken after waiting**, find and restart CC-Switch:
+
+```powershell
+# Find cc-switch.exe location
+$path = (Get-Process cc-switch -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+if (-not $path) {
+    $common = @(
+        "F:\CC\cc-switch.exe",
+        "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe",
+        "C:\Program Files\CC-Switch\cc-switch.exe"
+    )
+    $path = $common | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if ($path) {
+    Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep 2
+    Start-Process $path -WindowStyle Hidden
+    Write-Host "CC-Switch restarted from: $path"
+    Write-Host "Wait 30s for auto-recovery, then check /status"
+}
+```
+
+3. **If database was wiped** — Reconfigure provider and targets in CC-Switch GUI.
+
+#### 4b. CC-Switch Not Running
+
+If `/status` returns connection refused:
+
+```powershell
+# Find and start CC-Switch
+$common = @(
+    "F:\CC\cc-switch.exe",
+    "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe",
+    "C:\Program Files\CC-Switch\cc-switch.exe"
+)
+$path = $common | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($path) {
+    Start-Process $path -WindowStyle Hidden
+    Write-Host "CC-Switch started. Wait 10s before checking /status"
+} else {
+    Write-Host "ERROR: CC-Switch not found. Install CC-Switch first."
+}
+```
+
+#### 4c. Verify CC-Switch Forwards Requests
+
+```powershell
+curl.exe -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}' --max-time 15 2>$null | Select-Object -Last 1
+```
+
+Expected: a JSON response with model output (e.g., `"Hi! How can I help?"`), NOT a `proxy_error`.
+
+### Step 5: Start Codex In Order
+
+1. **First**: CC-Switch must be running with a valid provider (verified in Step 4)
 2. **Then**: Start Codex Desktop
 3. **Wait**: CC-Switch Live Takeover will update Codex config within seconds, writing `base_url` back to `15721` and `experimental_bearer_token = "PROXY_MANAGED"` — this is expected and correct
 4. **Verify**: Codex should connect without reconnecting errors
 
+### Step 6: 413 Payload Too Large Fix
+
+When Codex reports `413 Payload Too Large: Request body too large. Maximum allowed: 10 MB`:
+
+**Root cause**: The conversation context (system prompt + tool definitions + conversation history + file contents) exceeds CC-Switch's 10 MB request body limit. CC-Switch IS reachable — the request is just too big.
+
+**Fix options** (in priority order):
+
+1. **Start a new Codex conversation** — This resets the conversation context to near-zero. Old sessions are archived automatically.
+2. **Archive large sessions manually** — Move old `.jsonl` files from `$env:USERPROFILE\.codex\sessions\` to reduce what Codex loads.
+3. **Check for runaway context** — If Codex read very large files or had many tool-call rounds, the accumulated context can exceed 10 MB quickly. Start fresh.
+
+```powershell
+# Check session sizes to identify large contexts
+Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Sort-Object Length -Descending | Select-Object -First 5 Length, Name
+```
+
+Note: The 413 error is NOT a sandbox/network issue. If CC-Switch `/status` returns healthy and test requests work, but Codex shows 413, the fix is clearing conversation context — not changing sandbox or network settings.
+
 ## Strategy B: Elevated Sandbox + Portproxy (Legacy)
 
-Use only when `sandbox = "elevated"` is mandatory AND CC-Switch Live Takeover is disabled.
+Use only when `sandbox = "elevated"` is strictly required AND CC-Switch Live Takeover is disabled.
+
+**WARNING**: CC-Switch Live Takeover WILL revert `base_url` back to 15721, making this strategy fail. Only use if `experimental_bearer_token = "PROXY_MANAGED"` is NOT in config.
 
 ### B1. Stop Codex Desktop
 
-Same as A1.
+Same as Step 1.
 
 ### B2. Back Up And Patch Config
-
-```powershell
-Copy-Item "$env:USERPROFILE\.codex\config.toml" "$env:USERPROFILE\.codex\config.toml.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
-```
 
 Set both sandbox mode AND base_url:
 
@@ -187,33 +229,26 @@ sandbox = "elevated"
 base_url = "http://127.0.0.1:7897/v1"    # 7897 is the only sandbox-allowed port
 ```
 
-**WARNING**: If CC-Switch Live Takeover is active (`experimental_bearer_token = "PROXY_MANAGED"`), it WILL revert `base_url` back to 15721. Strategy B is incompatible with CC-Switch Live Takeover.
-
-### B3. Portproxy Setup
+### B3. Portproxy Setup (Admin)
 
 ```powershell
 netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1
 netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 connectport=15721 connectaddress=127.0.0.1
 ```
 
-### B4. AppContainer Loopback Exemption *(Admin)*
+### B4. AppContainer Loopback Exemption (Admin)
 
-Same as A4.
+Same as Step 3c.
 
-### B5. Firewall And Sandbox Cleanup *(Admin)*
+### B5. Firewall And Sandbox Cleanup (Admin)
 
 ```powershell
-# Remove sandbox block rules
-netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_tcp"
-netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_udp"
-netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_outbound"
-
-# Allow Codex-facing port
+netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_tcp" 2>$null
+netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_loopback_udp" 2>$null
+netsh advfirewall firewall delete rule name="codex_sandbox_offline_block_outbound" 2>$null
 netsh advfirewall firewall add rule name="Allow Codex Proxy 7897" dir=in action=allow protocol=tcp localport=7897
-
-# Delete sandbox users
-net user CodexSandboxOffline /delete
-net user CodexSandboxOnline /delete
+net user CodexSandboxOffline /delete 2>$null
+net user CodexSandboxOnline /delete 2>$null
 ```
 
 ### B6. Start In Order
@@ -222,74 +257,118 @@ net user CodexSandboxOnline /delete
 2. Verify portproxy: `netsh interface portproxy show all`
 3. Codex Desktop
 
-## CC-Switch Recovery
+## Verification Checklist
 
-If CC-Switch shows `"current_provider":null` after restart:
-
-1. **Wait** — CC-Switch auto-recovers Live configuration from backup within 30-60 seconds
-2. **Check logs** — Look for `Live 配置已从备份恢复` in CC-Switch console output
-3. **Manual restart** — If auto-recovery doesn't happen, find and restart:
-   ```powershell
-   # Find cc-switch.exe location
-   $path = (Get-Process cc-switch -ErrorAction SilentlyContinue | Select-Object -First 1).Path
-   if (-not $path) {
-       # Try common locations
-       $common = @(
-           "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe",
-           "F:\CC\cc-switch.exe",
-           "C:\Program Files\CC-Switch\cc-switch.exe"
-       )
-       $path = $common | Where-Object { Test-Path $_ } | Select-Object -First 1
-   }
-   if ($path) {
-       Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
-       Start-Sleep 2
-       Start-Process $path -WindowStyle Hidden
-   }
-   ```
-4. **If database was wiped** — Reconfigure provider and targets in CC-Switch GUI
-
-## Verification
-
-### Strategy A Verification
+After repair, verify all of these:
 
 ```powershell
-# 1. CC-Switch accepts requests
-curl.exe -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d '{"model":"<actual-model>","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}' --max-time 15
+# 1. Config is correct
+Write-Host "=== Config ===" 
+Get-Content "$env:USERPROFILE\.codex\config.toml" | Select-String 'sandbox|base_url'
 
-# 2. Config is correct
-Get-Content "$env:USERPROFILE\.codex\config.toml" | Select-String 'sandbox'
+# 2. CC-Switch healthy
+Write-Host "=== CC-Switch ===" 
+curl.exe -s http://127.0.0.1:15721/status --max-time 5 | Select-Object -Last 1
 
-# 3. Loopback exemption exists
+# 3. CC-Switch forwards requests
+Write-Host "=== API Test ===" 
+curl.exe -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}' --max-time 15 | Select-Object -Last 1
+
+# 4. Loopback exemption exists
+Write-Host "=== Loopback ===" 
 CheckNetIsolation LoopbackExempt -s | Select-String 'codex'
-```
 
-### Strategy B Verification
-
-```powershell
-# 1. Portproxy active
+# 5. No portproxy (Strategy A) or portproxy present (Strategy B)
+Write-Host "=== Portproxy ===" 
 netsh interface portproxy show all
-
-# 2. Request through portproxy works
-curl.exe -X POST http://127.0.0.1:7897/v1/responses -H "Content-Type: application/json" -d '{"model":"<actual-model>","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}' --max-time 10
-
-# 3. Codex config points to 7897
-Get-Content "$env:USERPROFILE\.codex\config.toml" | Select-String 'base_url|sandbox'
 ```
+
+### Success Criteria
+
+| Check | Strategy A Expected | Strategy B Expected |
+|---|---|---|
+| sandbox | `"unelevated"` | `"elevated"` |
+| base_url | `http://127.0.0.1:15721/v1` | `http://127.0.0.1:7897/v1` |
+| CC-Switch `/status` | `"running":true`, provider not null | Same |
+| API test | Model response, no `proxy_error` | Same (via 7897) |
+| Loopback | Codex package listed | Same |
+| Portproxy | Empty (or cleaned) | `7897 → 15721` |
+| Codex behavior | No reconnecting, no 413 | Same |
 
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
-| --- | --- | --- |
-| Codex reconnecting, sandbox=elevated | WFP blocking 15721 | Switch to Strategy A (unelevated) |
-| Codex reconnecting, sandbox=unelevated | CC-Switch provider null | CC-Switch recovery (see above) |
+|---|---|---|
+| Codex reconnecting, sandbox=elevated | WFP blocking 15721 | Strategy A: switch to unelevated |
+| Codex reconnecting, sandbox=unelevated | CC-Switch provider null or down | CC-Switch Recovery (Step 4a) |
+| `413 Payload Too Large` | Conversation context > 10 MB | Start new conversation (Step 6) |
+| `413` persists after new chat | Old sessions loading large context | Archive old sessions (Step 6) |
 | CC-Switch `/status` works but API fails | CC-Switch provider has no active targets | Check CC-Switch GUI → provider → targets |
-| CC-Switch `/status` connection refused | CC-Switch not running | Start CC-Switch |
-| `base_url` keeps reverting to 15721 | CC-Switch Live Takeover active | This is normal; use Strategy A |
-| Codex updated, loopback exemption lost | PackageFullName changed | Re-run A4 with new package name |
+| CC-Switch `/status` connection refused | CC-Switch not running | Start CC-Switch (Step 4b) |
+| CC-Switch `/status` shows `"No credentials"` | Credential loss after crash | Wait 30s for auto-recovery, or restart (Step 4a) |
+| CC-Switch `/status` shows `"current_provider":null` | Provider configuration lost | Wait 30-60s; if not recovered, restart CC-Switch |
+| `base_url` keeps reverting to 15721 | CC-Switch Live Takeover active | Normal behavior; use Strategy A |
+| Codex updated, loopback exemption lost | PackageFullName changed | Re-run Step 3c with new package name |
 | Portproxy disappeared after reboot | IP Helper service issue | Re-run B3; check IP Helper service |
 | Sandbox rules keep reappearing | Codex recreates on launch | Expected; clean while Codex is stopped |
-| Codex was working, suddenly reconnects | CC-Switch crashed and lost provider; or portproxy disappeared | Check CC-Switch `/status`; if provider is null, run CC-Switch Recovery |
-| CC-Switch `/status` shows provider but `active_targets` empty | Targets not yet loaded or configured | Wait 30s; if still empty, check CC-Switch GUI |
-| `error sending request for url (http://127.0.0.1:7897/...)` | Portproxy deleted or IP Helper service stopped | Re-run B3; check `services.msc` → IP Helper is running |
+| Codex was working, suddenly reconnects | CC-Switch crashed and lost provider | Check CC-Switch `/status`; run Step 4a |
+| CC-Switch shows provider but `active_targets:[]` | Targets not loaded or configured | Wait 30s; if still empty, check CC-Switch GUI |
+| `error sending request for url (http://127.0.0.1:7897/...)` | Portproxy deleted or IP Helper stopped | Re-run B3; check `services.msc` → IP Helper |
 | Codex uses `codex/cx/gpt-5.5` as model name | CC-Switch rewrote model field | Normal — CC-Switch prefixes provider-scoped model names |
+| All requests fail with 400 "No credentials" | CC-Switch lost API keys | CC-Switch Recovery (Step 4a); if persistent, re-enter keys in CC-Switch GUI |
+| CC-Switch restarted but `/status` still shows errors | CC-Switch needs more time for auto-recovery | Wait 30-60s, re-check; CC-Switch recovers Live config from backup |
+
+## CC-Switch Deep Recovery
+
+If standard recovery (Step 4a) doesn't work:
+
+### Check CC-Switch Logs
+
+Look for recovery messages in CC-Switch console output:
+- `Live 配置已从备份恢复` — Live config recovered from backup (good)
+- `No credentials for provider` — API keys missing
+- `failed to connect to upstream` — Network/DNS issue on CC-Switch side
+
+### Full CC-Switch Restart Cycle
+
+```powershell
+# 1. Kill CC-Switch
+Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep 3
+
+# 2. Find and start CC-Switch
+$path = @("F:\CC\cc-switch.exe", "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($path) {
+    Start-Process $path -WindowStyle Hidden
+    Write-Host "Started CC-Switch from $path"
+}
+
+# 3. Wait for full initialization
+Start-Sleep 10
+
+# 4. Check status
+curl.exe -s http://127.0.0.1:15721/status --max-time 5
+
+# 5. If still broken after 60s, CC-Switch needs manual reconfiguration via its GUI
+```
+
+### Provider Lost — Manual Recovery
+
+If CC-Switch repeatedly shows `"current_provider":null` after restarts:
+1. Open CC-Switch GUI
+2. Check provider configuration — re-enter API keys if needed
+3. Verify provider targets are configured and enabled
+4. Check that the Live configuration toggle is ON
+
+## Safety Notes
+
+- Always stop Codex Desktop before cleaning sandbox users or firewall/WFP state
+- Always back up `%USERPROFILE%\.codex\config.toml` before edits
+- Keep unrelated Codex config intact — only change `sandbox` mode
+- Resolve the current Codex `PackageFullName` dynamically — never hard-code it
+- Delete only known Codex sandbox rules or exact sandbox user names
+- Do NOT fight CC-Switch's `base_url` — use Strategy A instead
+- CC-Switch Live Takeover writes `base_url = "http://127.0.0.1:15721/v1"` and `experimental_bearer_token = "PROXY_MANAGED"` — this is NORMAL, don't revert it
+- Some repair commands require Administrator PowerShell
+- Codex Store updates change `PackageFullName` — re-run loopback exemption after updates
+- Every Codex launch recreates sandbox users and firewall rules — `unelevated` mode ensures they don't block the main process

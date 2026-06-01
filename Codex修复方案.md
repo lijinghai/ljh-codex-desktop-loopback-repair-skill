@@ -2,9 +2,12 @@
 
 # Codex Desktop 修复方案
 
-> 问题：Codex Desktop 一直显示 `Reconnecting` / `stream disconnected`，无法连接 CC-Switch (`127.0.0.1:15721`)。
-> 根因：`elevated` 沙箱 WFP 只放行 `7897` 端口，加上 CC-Switch Live Takeover 强制把 `base_url` 写回 `15721`，形成配置死锁。
-> 修复：优先把 sandbox 从 `elevated` 改为 `unelevated`，让 Codex 主进程不受 WFP 端口过滤，直接连接 `15721`。
+> **问题全景**：Codex Desktop 可能出现三种故障：
+> 1. `Reconnecting` / `stream disconnected` — 沙箱 WFP 阻断 15721，配置死锁
+> 2. `413 Payload Too Large` — 会话上下文超过 CC-Switch 10 MB 请求体限制
+> 3. CC-Switch 凭证丢失 — 崩溃后 provider 变 null 或报 "No credentials"
+>
+> **修复优先级**：先修沙箱（策略 A），再查 CC-Switch 健康，最后处理 413。
 
 ---
 
@@ -18,51 +21,36 @@
 Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force
 ```
 
-### 2. 备份并修改 config.toml
+### 2. 诊断当前状态
 
-编辑 `C:\Users\lijinghai\.codex\config.toml`，只改 `sandbox`，不要动 `base_url`，因为 CC-Switch 会接管它：
+```powershell
+# 查看 sandbox 和 base_url
+Get-Content "$env:USERPROFILE\.codex\config.toml" | Select-String 'sandbox|base_url|experimental_bearer_token'
+
+# 查看 CC-Switch 状态
+curl.exe -s http://127.0.0.1:15721/status
+
+# 查看 loopback 豁免
+CheckNetIsolation LoopbackExempt -s | Select-String 'codex|openai'
+
+# 查看端口转发
+netsh interface portproxy show all
+```
+
+### 3. 备份并修改 config.toml
+
+```powershell
+Copy-Item "$env:USERPROFILE\.codex\config.toml" "$env:USERPROFILE\.codex\config.toml.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
+```
+
+编辑 `C:\Users\lijinghai\.codex\config.toml`，**只改 `sandbox`，不要动 `base_url`**（CC-Switch 会接管它）：
 
 ```toml
 [windows]
 sandbox = "unelevated"   # 从 "elevated" 改为 "unelevated"
 ```
 
-备份命令：
-
-```powershell
-Copy-Item "$env:USERPROFILE\.codex\config.toml" "$env:USERPROFILE\.codex\config.toml.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
-```
-
-### 3. 确保 CC-Switch 正常运行
-
-```cmd
-curl http://127.0.0.1:15721/status
-```
-
-如果返回里有 `"current_provider":null`，先等 30 秒让 CC-Switch 从备份恢复。如果仍未恢复，启动 CC-Switch。常见路径：
-
-```text
-F:\CC\cc-switch.exe
-%LOCALAPPDATA%\com.ccswitch.desktop\cc-switch.exe
-```
-
-验证转发正常：
-
-```cmd
-curl -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d "{\"model\":\"gpt-5.5\",\"input\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_output_tokens\":10}" --max-time 15
-```
-
-应该返回正常模型输出，而不是 `proxy_error`。
-
 ### 4. 添加 AppContainer loopback 豁免（管理员）
-
-先查 Codex 包名，更新后可能变化：
-
-```powershell
-Get-AppxPackage -Name '*OpenAI*' | Select-Object PackageFullName
-```
-
-用查到的包名添加豁免：
 
 ```powershell
 $pkg = (Get-AppxPackage -Name '*OpenAI*').PackageFullName
@@ -82,11 +70,84 @@ net user CodexSandboxOnline /delete
 
 Codex 重启后会重建沙箱用户和规则，这是正常现象。`unelevated` 模式下它们不影响主进程直连代理。
 
-### 6. 按顺序启动
+### 6. 清理遗留端口转发（可选）
 
-1. 先确保 CC-Switch 正常运行。
-2. 再启动 Codex Desktop。
-3. 等几秒让 CC-Switch Live Takeover 接管配置。
+如果之前策略 B 配过 `7897→15721` 的端口转发，unelevated 下不再需要：
+
+```cmd
+netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1
+```
+
+---
+
+## CC-Switch 故障恢复
+
+Codex 突然重连通常是 CC-Switch 崩溃导致 provider 丢失或凭证丢失。
+
+### 情况 1：provider 为 null 或报 "No credentials"
+
+1. **等 30-60 秒**，让 CC-Switch 从备份自动恢复 Live 配置。
+2. 观察控制台日志，出现 `Live 配置已从备份恢复` 说明恢复成功。
+3. 如果等待后仍未恢复，重启 CC-Switch：
+
+```powershell
+# 找到 CC-Switch 并重启
+$path = (Get-Process cc-switch -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+if (-not $path) {
+    $common = @(
+        "F:\CC\cc-switch.exe",
+        "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe"
+    )
+    $path = $common | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if ($path) {
+    Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep 2
+    Start-Process $path -WindowStyle Hidden
+}
+```
+
+4. 重启后等 10 秒，再次检查 `/status`。
+5. 如果 60 秒后仍未恢复，打开 CC-Switch GUI 手动重新配置 provider 和 API 密钥。
+
+### 情况 2：CC-Switch 未运行
+
+```powershell
+# 尝试常见路径启动
+$common = @(
+    "F:\CC\cc-switch.exe",
+    "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe"
+)
+$path = $common | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($path) { Start-Process $path -WindowStyle Hidden }
+```
+
+### 验证 CC-Switch 转发正常
+
+```cmd
+curl -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d "{\"model\":\"gpt-5.5\",\"input\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_output_tokens\":10}" --max-time 15
+```
+
+应该返回模型输出（如 `Hi! How can I help?`），而不是 `proxy_error`。
+
+---
+
+## 413 Payload Too Large 修复
+
+**根因**：Codex 会话上下文（系统提示 + 工具定义 + 对话历史 + 文件内容）超过 CC-Switch 的 10 MB 请求体限制。**CC-Switch 是可以连通的**，只是请求体太大被拒绝。
+
+### 解决方法
+
+1. **开新会话** — 在 Codex 中开始一个新对话，上下文清零。这是最快最可靠的方法。
+2. **清理大会话文件** — 查看哪些会话占用大：
+
+```powershell
+Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Sort-Object Length -Descending | Select-Object -First 5 Length, Name
+```
+
+3. **避免超大上下文** — 如果一次对话中有大量工具调用或读取了大文件，上下文会快速增长超过 10 MB。
+
+**注意**：413 不是沙箱/网络问题。如果 CC-Switch `/status` 正常且测试请求可以通过，但 Codex 报 413，那就是上下文太大的问题。不需要改 sandbox 或网络设置。
 
 ---
 
@@ -94,7 +155,7 @@ Codex 重启后会重建沙箱用户和规则，这是正常现象。`unelevated
 
 仅在必须使用 `elevated`，且 CC-Switch Live Takeover 已关闭时使用。
 
-注意：CC-Switch Live Takeover 会把 `base_url` 写回 `15721`，导致此方案失效。
+**警告**：CC-Switch Live Takeover 会把 `base_url` 写回 `15721`，导致此方案失效。
 
 ### 1. 关闭 Codex
 
@@ -119,7 +180,7 @@ netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 con
 
 ### 4. AppContainer loopback 豁免
 
-同步骤 A 的第 4 步。
+同策略 A 第 4 步。
 
 ### 5. 防火墙和沙箱清理（管理员）
 
@@ -141,43 +202,55 @@ net user CodexSandboxOnline /delete
 
 ---
 
-## CC-Switch 故障恢复
-
-Codex 突然重连通常是 CC-Switch 崩溃导致 provider 丢失。
-
-1. 等 30-60 秒，让 CC-Switch 从备份自动恢复。
-2. 如果没有恢复，找到 exe 并重启：
-
-```powershell
-$path = (Get-Process cc-switch -ErrorAction SilentlyContinue | Select-Object -First 1).Path
-if (-not $path) {
-    $common = @(
-        "F:\CC\cc-switch.exe",
-        "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe"
-    )
-    $path = $common | Where-Object { Test-Path $_ } | Select-Object -First 1
-}
-if ($path) {
-    Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep 2
-    Start-Process $path -WindowStyle Hidden
-}
-```
-
----
-
 ## 验证
 
 ```cmd
+:: 检查配置
+findstr sandbox %USERPROFILE%\.codex\config.toml
+findstr base_url %USERPROFILE%\.codex\config.toml
+
 :: 检查 CC-Switch 状态
-curl http://127.0.0.1:15721/status
+curl -s http://127.0.0.1:15721/status
+
+:: 测试 API 转发
+curl -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d "{\"model\":\"gpt-5.5\",\"input\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_output_tokens\":10}" --max-time 15
 
 :: 检查 loopback 豁免
 CheckNetIsolation LoopbackExempt -s | findstr codex
 
-:: 检查 sandbox 配置
-findstr sandbox %USERPROFILE%\.codex\config.toml
+:: 检查端口转发
+netsh interface portproxy show all
 ```
+
+### 成功标准
+
+| 检查项 | 策略 A 期望 | 策略 B 期望 |
+|---|---|---|
+| sandbox | `"unelevated"` | `"elevated"` |
+| base_url | `http://127.0.0.1:15721/v1` | `http://127.0.0.1:7897/v1` |
+| CC-Switch `/status` | `"running":true`, provider 不为 null | 同 |
+| API 测试 | 模型正常输出 | 同（通过 7897） |
+| Loopback | Codex 包名在列表中 | 同 |
+| Portproxy | 空（或已清理） | `7897 → 15721` |
+| Codex 行为 | 无重连，无 413 | 同 |
+
+---
+
+## 故障速查表
+
+| 症状 | 可能原因 | 修复 |
+|---|---|---|
+| Codex 重连, sandbox=elevated | WFP 阻断 15721 | 策略 A：改为 unelevated |
+| Codex 重连, sandbox=unelevated | CC-Switch provider 丢失或未运行 | CC-Switch 恢复 |
+| `413 Payload Too Large` | 会话上下文 > 10 MB | 开新会话 |
+| CC-Switch `/status` 正常但 API 失败 | provider 无活跃目标 | 检查 CC-Switch GUI |
+| CC-Switch `/status` 连接被拒绝 | CC-Switch 未运行 | 启动 CC-Switch |
+| CC-Switch 报 "No credentials" | 崩溃后凭证丢失 | 等 30s 自动恢复，或重启 CC-Switch |
+| `base_url` 反复被改回 15721 | CC-Switch Live Takeover 活跃 | 正常行为，用策略 A |
+| Codex 更新后 loopback 豁免丢失 | PackageFullName 变了 | 重新执行策略 A 第 4 步 |
+| 端口转发重启后消失 | IP Helper 服务问题 | 重新执行 B3，检查 IP Helper 服务 |
+| 之前能用突然重连 | CC-Switch 崩溃丢失 provider | 检查 `/status`，执行 CC-Switch 恢复 |
+| Codex 模型名变成 `codex/cx/gpt-5.5` | CC-Switch 重写了 model 字段 | 正常，CC-Switch 加了 provider 前缀 |
 
 ---
 
@@ -185,6 +258,8 @@ findstr sandbox %USERPROFILE%\.codex\config.toml
 
 - 优先使用策略 A，即 `unelevated`，简单且不与 CC-Switch 冲突。
 - CC-Switch Live Takeover 会自动写入 `base_url = "http://127.0.0.1:15721/v1"` 和 `experimental_bearer_token = "PROXY_MANAGED"`，这是正常的，不要改回去。
+- CC-Switch 崩溃后等 30-60 秒，它会从备份自动恢复 Live 配置。如果等不及可以手动重启。
 - Codex Store 更新后 `PackageFullName` 可能变化，需要重新添加 loopback 豁免。
 - 每次 Codex 启动会重建沙箱用户和防火墙规则，`unelevated` 模式下它们不影响主进程。
 - CC-Switch 保持 `15721` 端口不变。
+- 413 错误不是网络问题 — CC-Switch 能连通，只是请求体太大。开新会话即可解决。

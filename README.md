@@ -4,7 +4,11 @@
 
 A Codex Skill for diagnosing and repairing Codex Desktop loopback proxy failures on Windows.
 
-It targets the common case where Codex Desktop keeps showing `Reconnecting` or `stream disconnected` even though a local OpenAI-compatible proxy such as CC-Switch is running on `127.0.0.1`.
+It targets three common failure modes:
+
+1. **Reconnecting / stream disconnected** — elevated sandbox WFP blocks 15721, deadlocks with CC-Switch Live Takeover
+2. **413 Payload Too Large** — conversation context exceeds CC-Switch's 10 MB request body limit
+3. **CC-Switch credential loss** — provider becomes null or reports "No credentials" after crash
 
 ## What This Skill Handles
 
@@ -14,17 +18,22 @@ It targets the common case where Codex Desktop keeps showing `Reconnecting` or `
 - **Codex sandbox firewall/WFP rules** — removes `codex_sandbox_offline_block_*` rules
 - **Codex sandbox users** — removes `CodexSandboxOffline` and `CodexSandboxOnline`
 - **`config.toml`** — backs up and patches sandbox mode without breaking CC-Switch integrations
-- **`netsh interface portproxy`** — for legacy elevated-sandbox setups requiring port 7897 forwarding
-- **CC-Switch crash recovery** — detects provider loss and guides recovery
+- **`netsh interface portproxy`** — cleans up legacy 7897→15721 forwarding when switching to Strategy A
+- **CC-Switch crash recovery** — detects provider/credential loss, waits for auto-recovery, or restarts CC-Switch
+- **413 Payload Too Large** — diagnoses oversized context and guides session cleanup
 
 ## Key Insight
 
-The root cause is a deadlock between two systems:
+Three independent problems can look the same:
 
-1. **Codex elevated sandbox** blocks all loopback ports except 7897
-2. **CC-Switch Live Takeover** forces `base_url` to `http://127.0.0.1:15721/v1`
+1. **Sandbox deadlock**: elevated sandbox blocks all ports except 7897, CC-Switch forces base_url to 15721 → Codex can't connect → Reconnecting loop
+2. **Context overflow**: CC-Switch is reachable but request body > 10 MB → 413 Payload Too Large
+3. **CC-Switch crash**: CC-Switch lost provider credentials after restart → all requests fail with 400
 
-The fix: set `sandbox = "unelevated"` — the main Codex process is no longer subject to WFP port filtering, so it can reach CC-Switch on 15721 directly. No portproxy needed.
+The fix priorities:
+- **First**: set `sandbox = "unelevated"` — eliminates WFP deadlock
+- **Second**: verify CC-Switch `/status` — ensure provider is valid and API forwarding works
+- **Third**: if 413 persists, start a new conversation to reset context
 
 ## Two Repair Strategies
 
@@ -45,6 +54,8 @@ Then restart Codex Desktop or open a new Codex session.
 
 ## Usage
 
+Basic repair:
+
 ```text
 Use $ljh-codex-desktop-loopback-repair-skill to fix Codex Desktop reconnecting on Windows.
 ```
@@ -55,15 +66,36 @@ With CC-Switch context:
 I use CC-Switch on 127.0.0.1:15721. Use $ljh-codex-desktop-loopback-repair-skill to fix Codex Desktop reconnecting.
 ```
 
+With 413 error:
+
+```text
+Codex shows "413 Payload Too Large" error. Use $ljh-codex-desktop-loopback-repair-skill to fix it.
+```
+
+## Repair Flow
+
+```
+Stop Codex → Diagnose (sandbox, CC-Switch, loopback, portproxy)
+    ↓
+sandbox=elevated? → Strategy A: unelevated + direct 15721
+    ↓
+CC-Switch healthy? → If not: wait 30s for auto-recovery, or restart CC-Switch
+    ↓
+413 error? → Start new conversation (context too large)
+    ↓
+Start Codex → Verify
+```
+
 ## Safety Notes
 
 - Inspect current state before changing anything
 - Stop Codex Desktop before cleaning sandbox users or firewall/WFP state
 - Back up `%USERPROFILE%\.codex\config.toml` before edits
-- Keep unrelated Codex config intact
+- Keep unrelated Codex config intact — only change `sandbox` mode
 - Resolve the current Codex `PackageFullName` dynamically — never hard-code it
 - Delete only known Codex sandbox rules or exact sandbox user names
-- Do NOT fight CC-Switch's base_url — use Strategy A instead
+- Do NOT fight CC-Switch's `base_url` — use Strategy A instead
+- CC-Switch Live Takeover writes `base_url = "http://127.0.0.1:15721/v1"` — this is NORMAL
 
 Some repair commands require Administrator PowerShell.
 
@@ -71,15 +103,13 @@ Some repair commands require Administrator PowerShell.
 
 ```
 .
-├── SKILL.md
+├── SKILL.md              # Main skill definition (Codex loads this)
 ├── agents/
-│   └── openai.yaml
+│   └── openai.yaml       # Agent interface config
 ├── scripts/
-│   └── validate_skill.py
-├── .github/
-│   └── workflows/
-│       └── validate.yml
-├── README.md
+│   └── validate_skill.py # Skill validation script
+├── Codex修复方案.md        # Chinese repair guide (detailed)
+├── README.md             # This file
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── LICENSE
@@ -100,3 +130,4 @@ MIT License. See [LICENSE](LICENSE).
 
 - Author: 算个文科生吧
 - Contact: lijinghailjh@163.com
+- WeChat: RabbitRobot2025
