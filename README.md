@@ -72,6 +72,46 @@ Then open `http://127.0.0.1:8765/` and click **一键修复**.
 
 Run the PowerShell command as Administrator if you also want the panel to clean Codex sandbox firewall rules, sandbox users, and legacy `7897 -> 15721` portproxy state. Without Administrator rights, it still backs up and patches `config.toml`, adds the loopback exemption when possible, checks CC-Switch, and can archive oversized 413 sessions.
 
+### Web Repair Panel
+
+![Codex repair web panel](docs/repair-web.png)
+
+Start the local repair panel from the repository root:
+
+```bat
+start-repair-web.bat
+```
+
+Or run the PowerShell server directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-repair-web.ps1
+```
+
+The page opens at `http://127.0.0.1:8765/`. Keep the terminal window open while using the page. For a full repair, start the terminal as Administrator so the web panel can also change firewall rules, sandbox users, and `netsh interface portproxy` state.
+
+### Web Buttons
+
+| Button | What it does |
+| --- | --- |
+| Refresh Status | Reads current `config.toml`, CC-Switch status, loopback exemption, sandbox guard, portproxy, proxy env vars, and large session files. |
+| Full Diagnose | Prints a detailed diagnosis and recommendations into the log panel. |
+| Recommended One-Click Repair | Stops Codex, removes user proxy variables, switches sandbox to `unelevated`, adds loopback exemption, cleans sandbox state and old portproxy when admin, and restarts CC-Switch if needed. |
+| Switch to Strategy A | Applies the recommended `unelevated` sandbox strategy without the extra CC-Switch recovery steps. |
+| Install Sandbox Guard | Installs and starts the guard that keeps CC-Switch from reverting `sandbox` back to `elevated`. |
+| Fix 413 Context | Stops Codex and archives today's `.jsonl` session files to clear oversized conversation context. |
+| Delete HTTP_PROXY | Removes user-level `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, and `https_proxy` variables that can break CC-Switch outbound calls. |
+| Restart CC-Switch | Stops and restarts CC-Switch from a known install path, then waits for its provider recovery. |
+| Test CC-Switch API | Sends a tiny request through `http://127.0.0.1:15721/v1/responses` to verify forwarding. |
+| Stop Codex | Stops running Codex processes before repair. |
+| Add Loopback Exemption | Adds the current OpenAI/Codex MSIX package to `CheckNetIsolation LoopbackExempt`. |
+| Clean Sandbox State | Removes known Codex sandbox firewall rules and sandbox users. Requires Administrator. |
+| Clean Old Portproxy | Deletes the legacy `127.0.0.1:7897 -> 127.0.0.1:15721` mapping. Requires Administrator. |
+| Start CC-Switch | Starts CC-Switch from a known install path when it is not running. |
+| Install Launcher | Copies `start-codex.bat` to `%USERPROFILE%\.codex\start-codex.bat`. |
+| Enable 7897 Portproxy | Applies legacy Strategy B for setups that must keep `sandbox = "elevated"`. Requires Administrator and conflicts with CC-Switch Live Takeover. |
+| Show Launch Path | Prints the local launcher path in the log panel. |
+
 Basic repair:
 
 ```text

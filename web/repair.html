@@ -3,21 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Codex 一键修复</title>
+  <title>Codex 修复控制台</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --ink: #20242a;
-      --muted: #64707d;
-      --line: #dfe4ea;
-      --accent: #0d766e;
-      --accent-dark: #075e58;
-      --warn: #9a5a00;
-      --bad: #a73535;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-soft: #f9fbfc;
+      --ink: #17202a;
+      --muted: #657283;
+      --line: #dbe3eb;
+      --accent: #0f766e;
+      --accent-strong: #0b5f59;
+      --blue: #2f5d8c;
+      --warn: #9a6200;
+      --bad: #a43d3d;
       --good: #167044;
-      --code: #101820;
+      --code: #111923;
+      --shadow: 0 18px 45px rgba(25, 38, 52, .08);
     }
 
     * { box-sizing: border-box; }
@@ -26,153 +29,191 @@
       margin: 0;
       min-height: 100vh;
       font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
-      background: var(--bg);
+      background:
+        linear-gradient(180deg, #edf3f6 0, #f7f8fa 260px, var(--bg) 100%);
       color: var(--ink);
     }
 
     main {
-      width: min(1120px, calc(100vw - 32px));
+      width: min(1260px, calc(100vw - 32px));
       margin: 0 auto;
-      padding: 28px 0 36px;
+      padding: 30px 0 42px;
     }
 
     header {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 22px;
       align-items: end;
-      justify-content: space-between;
-      gap: 20px;
-      padding: 0 0 18px;
-      border-bottom: 1px solid var(--line);
+      padding-bottom: 18px;
+      border-bottom: 1px solid rgba(96, 112, 128, .22);
     }
 
     h1 {
       margin: 0;
-      font-size: clamp(26px, 4vw, 42px);
+      font-size: clamp(28px, 4vw, 42px);
       line-height: 1.1;
+      letter-spacing: 0;
     }
 
+    h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
+    h3 { margin: 0; font-size: 14px; color: var(--muted); letter-spacing: 0; }
+
     .subtitle {
+      max-width: 780px;
       margin: 10px 0 0;
       color: var(--muted);
       font-size: 15px;
-      line-height: 1.6;
+      line-height: 1.65;
     }
 
-    .toolbar {
+    .toolbar, .actions {
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
-      justify-content: flex-end;
     }
+
+    .toolbar { justify-content: flex-end; }
 
     button {
-      min-height: 42px;
+      min-height: 40px;
       border: 1px solid var(--line);
       border-radius: 6px;
-      padding: 0 16px;
+      padding: 0 14px;
       font: inherit;
+      font-size: 14px;
       font-weight: 650;
-      background: var(--panel);
+      background: var(--surface);
       color: var(--ink);
       cursor: pointer;
+      transition: border-color .16s ease, background .16s ease, transform .16s ease;
     }
 
-    button:hover { border-color: #aeb8c2; }
-    button:disabled { cursor: wait; opacity: .64; }
+    button:hover { border-color: #aebbc8; transform: translateY(-1px); }
+    button:disabled { cursor: wait; opacity: .62; transform: none; }
+    .primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+    .quiet { color: var(--blue); }
 
-    .primary {
-      border-color: var(--accent);
-      background: var(--accent);
-      color: white;
-    }
-
-    .primary:hover { background: var(--accent-dark); }
-
-    .grid {
+    .summary {
       display: grid;
-      grid-template-columns: 1.05fr .95fr;
-      gap: 18px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
       margin-top: 18px;
     }
 
-    section {
-      background: var(--panel);
+    .summary-item {
+      min-height: 84px;
+      padding: 14px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 18px;
+      background: rgba(255, 255, 255, .78);
+      box-shadow: 0 10px 28px rgba(31, 43, 56, .05);
     }
 
-    h2 {
-      margin: 0 0 14px;
-      font-size: 18px;
-    }
-
-    .status-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .item {
-      min-height: 74px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 12px;
-      background: #fbfcfd;
-    }
-
-    .label {
+    .summary-label, .label {
       display: block;
       color: var(--muted);
       font-size: 12px;
       margin-bottom: 7px;
     }
 
-    .value {
+    .summary-value, .value {
       overflow-wrap: anywhere;
       font-size: 14px;
-      font-weight: 650;
-      line-height: 1.35;
+      font-weight: 700;
+      line-height: 1.38;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(390px, .78fr);
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-body { padding: 18px; }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .item {
+      min-height: 72px;
+      border: 1px solid #e4e9ef;
+      border-radius: 6px;
+      padding: 12px;
+      background: var(--surface-soft);
     }
 
     .good { color: var(--good); }
     .warn { color: var(--warn); }
-    .bad  { color: var(--bad); }
+    .bad { color: var(--bad); }
+
+    .group { margin-top: 18px; }
+    .group:first-child { margin-top: 0; }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+      margin-top: 10px;
+    }
+
+    .note {
+      margin: 14px 0 0;
+      padding: 12px 14px;
+      border: 1px solid #d7e5e2;
+      border-radius: 6px;
+      background: #f6fbfa;
+      color: #47615e;
+      font-size: 13px;
+      line-height: 1.55;
+    }
 
     .log {
-      min-height: 338px;
-      max-height: 520px;
+      min-height: 650px;
+      max-height: 760px;
       overflow: auto;
       margin: 0;
-      padding: 14px;
-      border-radius: 6px;
+      padding: 16px;
+      border-radius: 0 0 8px 8px;
       background: var(--code);
       color: #d8e5e3;
       font: 13px/1.55 Consolas, "Cascadia Mono", monospace;
       white-space: pre-wrap;
     }
 
-    .actions {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 10px;
-      margin-top: 14px;
-    }
-
-    .note {
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    @media (max-width: 820px) {
-      header { align-items: stretch; flex-direction: column; }
+    @media (max-width: 980px) {
+      header { grid-template-columns: 1fr; align-items: stretch; }
       .toolbar { justify-content: stretch; }
-      .toolbar button, .actions button { width: 100%; }
-      .grid { grid-template-columns: 1fr; }
-      .status-grid { grid-template-columns: 1fr; }
-      .actions { grid-template-columns: 1fr; }
+      .toolbar button { flex: 1 1 160px; }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      .log { min-height: 420px; }
+    }
+
+    @media (max-width: 620px) {
+      main { width: min(100vw - 22px, 1260px); padding-top: 20px; }
+      .summary, .status-grid, .actions { grid-template-columns: 1fr; }
+      button { width: 100%; }
     }
   </style>
 </head>
@@ -180,40 +221,83 @@
   <main>
     <header>
       <div>
-        <h1>Codex 一键修复</h1>
-        <p class="subtitle">修复 reconnecting、413 上下文过大、CC-Switch 崩溃。含 sandbox 永久守护。</p>
+        <h1>Codex 修复控制台</h1>
+        <p class="subtitle">把本 Skill 的诊断和修复流程收进一个本地页面。遇到重连、413、CC-Switch 异常、Loopback 或 Sandbox 问题时，先刷新状态，再点对应按钮处理。</p>
       </div>
       <div class="toolbar">
         <button id="refreshBtn" type="button">刷新状态</button>
-        <button id="repairBtn" class="primary" type="button">一键修复</button>
+        <button id="diagnoseBtn" type="button">完整诊断</button>
+        <button id="repairBtn" class="primary" type="button">推荐一键修复</button>
       </div>
     </header>
 
-    <div class="grid">
-      <section>
-        <h2>当前状态</h2>
-        <div class="status-grid">
-          <div class="item"><span class="label">沙箱模式</span><span id="sandbox" class="value">检查中</span></div>
-          <div class="item"><span class="label">CC-Switch</span><span id="cc" class="value">检查中</span></div>
-          <div class="item"><span class="label">base_url</span><span id="baseUrl" class="value">检查中</span></div>
-          <div class="item"><span class="label">Loopback 豁免</span><span id="loopback" class="value">检查中</span></div>
-          <div class="item"><span class="label">Sandbox 守护</span><span id="guard" class="value">检查中</span></div>
-          <div class="item"><span class="label">Portproxy 7897→15721</span><span id="portproxy" class="value">检查中</span></div>
-          <div class="item"><span class="label">大会话文件</span><span id="sessions" class="value">检查中</span></div>
-          <div class="item"><span class="label">提供商</span><span id="provider" class="value">检查中</span></div>
+    <div class="summary">
+      <div class="summary-item"><span class="summary-label">Sandbox</span><span id="sandboxSummary" class="summary-value">检查中</span></div>
+      <div class="summary-item"><span class="summary-label">CC-Switch</span><span id="ccSummary" class="summary-value">检查中</span></div>
+      <div class="summary-item"><span class="summary-label">守护进程</span><span id="guardSummary" class="summary-value">检查中</span></div>
+      <div class="summary-item"><span class="summary-label">上下文</span><span id="sessionSummary" class="summary-value">检查中</span></div>
+    </div>
+
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>状态与操作</h2>
+          <h3>本地 127.0.0.1 控制台</h3>
         </div>
-        <div class="actions">
-          <button id="clearBtn" type="button">清理 413 上下文</button>
-          <button id="guardBtn" type="button">安装 Sandbox 守护</button>
-          <button id="launcherBtn" type="button">安装一键启动器</button>
-          <button id="portproxyBtn" type="button">修复 Portproxy</button>
-          <button id="openBtn" type="button">打开 Codex</button>
+        <div class="panel-body">
+          <div class="status-grid">
+            <div class="item"><span class="label">Sandbox 模式</span><span id="sandbox" class="value">检查中</span></div>
+            <div class="item"><span class="label">CC-Switch</span><span id="cc" class="value">检查中</span></div>
+            <div class="item"><span class="label">base_url</span><span id="baseUrl" class="value">检查中</span></div>
+            <div class="item"><span class="label">PROXY_MANAGED</span><span id="token" class="value">检查中</span></div>
+            <div class="item"><span class="label">Loopback 豁免</span><span id="loopback" class="value">检查中</span></div>
+            <div class="item"><span class="label">Sandbox 守护</span><span id="guard" class="value">检查中</span></div>
+            <div class="item"><span class="label">Legacy Portproxy</span><span id="portproxy" class="value">检查中</span></div>
+            <div class="item"><span class="label">大 Session</span><span id="sessions" class="value">检查中</span></div>
+            <div class="item"><span class="label">HTTP_PROXY</span><span id="proxy" class="value">检查中</span></div>
+            <div class="item"><span class="label">管理员权限</span><span id="admin" class="value">检查中</span></div>
+          </div>
+
+          <div class="group">
+            <h3>推荐修复</h3>
+            <div class="actions">
+              <button id="strategyABtn" class="primary" type="button">切到 Strategy A</button>
+              <button id="guardBtn" type="button">安装 Sandbox 守护</button>
+              <button id="clearBtn" type="button">修复 413 上下文</button>
+              <button id="removeProxyBtn" type="button">删除 HTTP_PROXY</button>
+              <button id="restartCcBtn" type="button">重启 CC-Switch</button>
+              <button id="verifyApiBtn" type="button">测试 CC-Switch API</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <h3>单项工具</h3>
+            <div class="actions">
+              <button id="stopBtn" type="button">停止 Codex</button>
+              <button id="loopbackBtn" type="button">添加 Loopback 豁免</button>
+              <button id="cleanSandboxBtn" type="button">清理 Sandbox 状态</button>
+              <button id="cleanPortproxyBtn" type="button">清理旧 Portproxy</button>
+              <button id="startCcBtn" type="button">启动 CC-Switch</button>
+              <button id="launcherBtn" type="button">安装一键启动器</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <h3>Legacy Strategy B</h3>
+            <div class="actions">
+              <button id="strategyBBtn" class="quiet" type="button">启用 7897 Portproxy</button>
+              <button id="openBtn" type="button">显示启动路径</button>
+            </div>
+          </div>
+          <p class="note" id="adminNote">正在检查权限...</p>
         </div>
-        <p class="note" id="adminNote">如果以管理员方式启动本控制台，会额外清理防火墙规则、沙箱用户，并确保 portproxy 7897→15721 存在。</p>
       </section>
 
-      <section>
-        <h2>执行日志</h2>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>执行日志</h2>
+          <h3 id="checkedAt">等待刷新</h3>
+        </div>
         <pre id="log" class="log">等待操作...</pre>
       </section>
     </div>
@@ -221,11 +305,14 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const buttons = [$('refreshBtn'), $('repairBtn'), $('clearBtn'), $('guardBtn'), $('launcherBtn'), $('portproxyBtn')];
+    const actionIds = [
+      'refreshBtn', 'diagnoseBtn', 'repairBtn', 'strategyABtn', 'guardBtn', 'clearBtn',
+      'removeProxyBtn', 'restartCcBtn', 'verifyApiBtn', 'stopBtn', 'loopbackBtn',
+      'cleanSandboxBtn', 'cleanPortproxyBtn', 'startCcBtn', 'launcherBtn', 'strategyBBtn'
+    ];
+    const buttons = actionIds.map($).filter(Boolean);
 
-    function setBusy(busy) {
-      buttons.forEach((button) => button.disabled = busy);
-    }
+    function setBusy(busy) { buttons.forEach((button) => { button.disabled = busy; }); }
 
     function line(text) {
       const log = $('log');
@@ -240,48 +327,37 @@
     }
 
     function renderStatus(data) {
-      setValue('sandbox', data.sandbox === 'unelevated'
-        ? 'unelevated，正常'
-        : `${data.sandbox}，需要修复`,
-        data.sandbox === 'unelevated' ? 'good' : (data.sandbox === 'elevated' ? 'bad' : 'warn'));
+      const sandboxGood = data.sandbox === 'unelevated';
+      const sessions = data.largeSessions || [];
+      const hasProxy = data.proxyVars && data.proxyVars.length;
 
-      setValue('cc', data.ccSwitchHealthy
-        ? `正常：${data.provider}`
-        : (data.ccSwitchRunning ? `异常：${data.lastError || 'provider 未就绪'}` : '未运行，需要启动'),
-        data.ccSwitchHealthy ? 'good' : (data.ccSwitchRunning ? 'warn' : 'bad'));
-
-      setValue('baseUrl', data.baseUrl || '未找到',
-        data.baseUrl && data.baseUrl.includes('15721') ? 'good' : 'warn');
-
-      setValue('loopback', data.hasLoopback ? '已存在' : '未发现',
-        data.hasLoopback ? 'good' : 'warn');
-
-      setValue('guard', data.guardInstalled
-        ? (data.guardRunning ? '守护运行中' : '已安装但未运行')
-        : '未安装，建议安装',
-        data.guardRunning ? 'good' : (data.guardInstalled ? 'warn' : 'warn'));
-
-      setValue('portproxy', data.hasPortproxy ? '7897→15721' : '缺失，需要修复',
-        data.hasPortproxy ? 'good' : 'bad');
-
-      const sc = data.largeSessions;
-      setValue('sessions', sc && sc.length
-        ? `${sc.length} 个超过 5MB（最大 ${sc[0].mb}MB）`
-        : '未发现超过 5MB',
-        sc && sc.length ? 'warn' : 'good');
-
-      setValue('provider', (data.ccSwitchRunning && data.provider && data.provider !== 'none')
-        ? data.provider : '未知', data.ccSwitchHealthy ? 'good' : 'warn');
-
+      setValue('sandbox', sandboxGood ? 'unelevated，正常' : `${data.sandbox}，需要处理`, sandboxGood ? 'good' : (data.sandbox === 'elevated' ? 'bad' : 'warn'));
+      setValue('sandboxSummary', sandboxGood ? '直连模式正常' : '需要切到 Strategy A', sandboxGood ? 'good' : 'bad');
+      setValue('cc', data.ccSwitchHealthy ? `正常，provider=${data.provider}` : (data.ccSwitchRunning ? `异常：${data.lastError || 'provider 未就绪'}` : '未运行'), data.ccSwitchHealthy ? 'good' : (data.ccSwitchRunning ? 'warn' : 'bad'));
+      setValue('ccSummary', data.ccSwitchHealthy ? '服务可用' : '需要启动或恢复', data.ccSwitchHealthy ? 'good' : 'warn');
+      setValue('baseUrl', data.baseUrl || '未找到', data.baseUrl && data.baseUrl.includes('15721') ? 'good' : 'warn');
+      setValue('token', data.tokenManaged ? 'CC-Switch 接管中' : '未发现', data.tokenManaged ? 'good' : 'warn');
+      setValue('loopback', data.hasLoopback ? '已存在' : '未发现', data.hasLoopback ? 'good' : 'warn');
+      setValue('guard', data.guardInstalled ? (data.guardRunning ? '已安装并运行' : '已安装，未运行') : '未安装', data.guardRunning ? 'good' : 'warn');
+      setValue('guardSummary', data.guardRunning ? '自动守护中' : (data.guardInstalled ? '已安装，未运行' : '建议安装'), data.guardRunning ? 'good' : 'warn');
+      setValue('portproxy', data.hasPortproxy ? '存在 7897 -> 15721（Strategy A 可清理）' : '未发现，Strategy A 正常', data.hasPortproxy ? 'warn' : 'good');
+      setValue('sessions', sessions.length ? `${sessions.length} 个超过 5MB，最大 ${sessions[0].mb}MB` : '未发现超过 5MB', sessions.length ? 'warn' : 'good');
+      setValue('sessionSummary', sessions.length ? '可能触发 413' : '未见大上下文', sessions.length ? 'warn' : 'good');
+      setValue('proxy', hasProxy ? data.proxyVars.join('，') : '未发现用户级代理变量', hasProxy ? 'bad' : 'good');
+      setValue('admin', data.isAdmin ? '是' : '否', data.isAdmin ? 'good' : 'warn');
+      $('checkedAt').textContent = data.checkedAt || '已刷新';
       $('adminNote').textContent = data.isAdmin
-        ? '当前已用管理员权限运行：可清理防火墙规则、沙箱用户，并确保 portproxy 7897→15721。'
-        : '当前不是管理员权限：会修复主要配置；防火墙规则、沙箱用户和 portproxy 会跳过。建议以管理员运行以完整修复。';
+        ? '当前是管理员权限：可以清理防火墙规则、Sandbox 用户和 netsh portproxy。'
+        : '当前不是管理员权限：配置、Session、守护脚本和 CC-Switch 可以处理；防火墙规则、Sandbox 用户、netsh portproxy 可能需要管理员运行。';
     }
 
     async function request(path, method = 'GET') {
       const response = await fetch(path, { method });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      return response.json();
+      const text = await response.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch (error) { throw new Error(text || error.message); }
+      if (!response.ok || data.ok === false) throw new Error(data.error || `${response.status} ${response.statusText}`);
+      return data;
     }
 
     async function refresh() {
@@ -290,102 +366,39 @@
         const data = await request('/api/status');
         renderStatus(data);
         line(`[${data.checkedAt}] 状态已刷新。`);
-      } catch (error) {
-        line(`状态刷新失败：${error.message} —— 后端服务是否在运行？`);
-      } finally {
-        setBusy(false);
-      }
+      } catch (error) { line(`状态刷新失败：${error.message}`); }
+      finally { setBusy(false); }
     }
 
-    async function repair() {
+    async function runAction(path, startText, doneText, method = 'POST') {
       setBusy(true);
-      $('log').textContent = '开始一键修复...';
+      $('log').textContent = startText;
       try {
-        const data = await request('/api/repair', 'POST');
+        const data = await request(path, method);
         (data.log || []).forEach(line);
-        renderStatus(data.status);
-        line('---');
-        line('一键修复完成。');
-        if (!data.status.guardInstalled) {
-          line('提示：点击"安装 Sandbox 守护"来防止 CC-Switch 反复改回 elevated。');
-        }
-        line('请重新打开 Codex Desktop。');
-      } catch (error) {
-        line(`修复失败：${error.message}`);
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    async function clear413() {
-      setBusy(true);
-      $('log').textContent = '开始清理 413 上下文...';
-      try {
-        const data = await request('/api/clear-413', 'POST');
-        (data.log || []).forEach(line);
-        renderStatus(data.status);
-        line('完成。请重新打开 Codex Desktop。');
-      } catch (error) {
-        line(`清理失败：${error.message}`);
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    async function installGuard() {
-      setBusy(true);
-      $('log').textContent = '安装 Sandbox 守护...';
-      try {
-        const data = await request('/api/install-guard', 'POST');
-        (data.log || []).forEach(line);
-        renderStatus(data.status);
-        line('完成。守护进程已安装并启动，开机自启。');
-      } catch (error) {
-        line(`安装失败：${error.message} —— 可能 API 不支持，请检查后端版本`);
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    async function installLauncher() {
-      setBusy(true);
-      $('log').textContent = '安装一键启动器...';
-      try {
-        const data = await request('/api/install-launcher', 'POST');
-        (data.log || []).forEach(line);
-        line('完成。start-codex.bat 已安装到 .codex 目录。');
-        line('双击该文件即可按正确顺序启动所有组件。');
-      } catch (error) {
-        line(`安装失败：${error.message}`);
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    async function fixPortproxy() {
-      setBusy(true);
-      $('log').textContent = '修复 Portproxy 7897→15721...';
-      try {
-        const data = await request('/api/fix-portproxy', 'POST');
-        (data.log || []).forEach(line);
-        renderStatus(data.status);
-        if (data.ok) {
-          line('完成。Portproxy 7897→15721 已就绪。');
-        }
-      } catch (error) {
-        line(`修复失败：${error.message} —— 可能需要管理员权限`);
-      } finally {
-        setBusy(false);
-      }
+        if (data.status) renderStatus(data.status);
+        line(doneText || '完成。');
+      } catch (error) { line(`失败：${error.message}`); }
+      finally { setBusy(false); }
     }
 
     $('refreshBtn').addEventListener('click', refresh);
-    $('repairBtn').addEventListener('click', repair);
-    $('clearBtn').addEventListener('click', clear413);
-    $('guardBtn').addEventListener('click', installGuard);
-    $('launcherBtn').addEventListener('click', installLauncher);
-    $('portproxyBtn').addEventListener('click', fixPortproxy);
-    $('openBtn').addEventListener('click', () => line('请从开始菜单打开 Codex Desktop；或双击 %USERPROFILE%\\.codex\\start-codex.bat。'));
+    $('diagnoseBtn').addEventListener('click', () => runAction('/api/diagnose', '开始完整诊断...', '诊断完成。', 'GET'));
+    $('repairBtn').addEventListener('click', () => runAction('/api/repair', '开始推荐一键修复...', '推荐修复完成，请重新打开 Codex Desktop。'));
+    $('strategyABtn').addEventListener('click', () => runAction('/api/strategy-a', '切换到 Strategy A...', 'Strategy A 已处理。'));
+    $('guardBtn').addEventListener('click', () => runAction('/api/install-guard', '安装 Sandbox 守护...', 'Sandbox 守护已安装并启动。'));
+    $('clearBtn').addEventListener('click', () => runAction('/api/clear-413', '开始清理 413 上下文...', '413 上下文清理完成，请开启新会话。'));
+    $('removeProxyBtn').addEventListener('click', () => runAction('/api/remove-proxy', '删除用户级 HTTP_PROXY/HTTPS_PROXY...', '代理变量处理完成。'));
+    $('restartCcBtn').addEventListener('click', () => runAction('/api/restart-ccswitch', '重启 CC-Switch...', 'CC-Switch 已请求重启，等待 30 秒后再刷新状态。'));
+    $('verifyApiBtn').addEventListener('click', () => runAction('/api/verify-api', '测试 CC-Switch /v1/responses...', 'API 测试完成。'));
+    $('stopBtn').addEventListener('click', () => runAction('/api/stop-codex', '停止 Codex...', 'Codex 停止动作完成。'));
+    $('loopbackBtn').addEventListener('click', () => runAction('/api/add-loopback', '添加 Loopback 豁免...', 'Loopback 豁免处理完成。'));
+    $('cleanSandboxBtn').addEventListener('click', () => runAction('/api/clean-sandbox', '清理 Sandbox 状态...', 'Sandbox 状态清理完成。'));
+    $('cleanPortproxyBtn').addEventListener('click', () => runAction('/api/clean-portproxy', '清理旧 Portproxy...', '旧 Portproxy 清理完成。'));
+    $('startCcBtn').addEventListener('click', () => runAction('/api/start-ccswitch', '启动 CC-Switch...', 'CC-Switch 启动动作完成。'));
+    $('launcherBtn').addEventListener('click', () => runAction('/api/install-launcher', '安装一键启动器...', 'start-codex.bat 已安装到 .codex 目录。'));
+    $('strategyBBtn').addEventListener('click', () => runAction('/api/strategy-b', '启用 Legacy Strategy B...', 'Strategy B 已处理。'));
+    $('openBtn').addEventListener('click', () => line('可双击 %USERPROFILE%\\.codex\\start-codex.bat，或从开始菜单打开 Codex Desktop。'));
 
     refresh();
   </script>
