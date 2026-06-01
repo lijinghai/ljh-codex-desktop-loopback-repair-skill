@@ -328,40 +328,16 @@ Write-Host "Codex repair web panel: $prefix"
 Write-Host "Press Ctrl+C to stop."
 if (-not $NoBrowser) { Start-Process $prefix }
 
-# Ctrl+C handler — clean shutdown
-$ctrlC = $false
-[Console]::TreatControlCAsInput = $false
-$null = Register-EngineEvent -SourceIdentifier ([System.Management.Automation.EngineIntrinsics]::EscapeStateChangeEvent) -Action {
-    $script:ctrlC = $true
-}
-
 try {
-    while (-not $ctrlC) {
+    while ($true) {
         $client = $null
         try {
-            if ($listener.Pending()) {
-                $client = $listener.AcceptTcpClient()
-            } else {
-                Start-Sleep -Milliseconds 200
-                continue
-            }
-        } catch {
-            if ($ctrlC) { break }
-            Start-Sleep -Milliseconds 200
-            continue
-        }
-
-        if ($client -eq $null) { continue }
-
-        try {
+            $client = $listener.AcceptTcpClient()
             $client.ReceiveTimeout = 5000
             $stream = $client.GetStream()
             $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII, $false, 1024, $true)
             $requestLine = $reader.ReadLine()
-            if (-not $requestLine) {
-                $client.Close()
-                continue
-            }
+            if (-not $requestLine) { continue }
 
             while ($true) {
                 $header = $reader.ReadLine()
@@ -387,8 +363,10 @@ try {
             } else {
                 Send-Response $client 404 "application/json" '{"ok":false,"error":"not found"}'
             }
+        } catch [System.Net.Sockets.SocketException] {
+            break
         } catch {
-            if ($client -and -not $ctrlC) {
+            if ($client) {
                 Send-Response $client 500 "application/json" (ConvertTo-ResultJson @{ ok = $false; error = $_.Exception.Message })
             }
         } finally {
@@ -396,7 +374,5 @@ try {
         }
     }
 } finally {
-    Write-Host "Shutting down..."
     $listener.Stop()
-    Get-EventSubscriber | Unregister-Event -Force -ErrorAction SilentlyContinue
 }
