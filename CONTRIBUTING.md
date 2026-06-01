@@ -2,6 +2,7 @@
 Author: 算个文科生吧
 Contact: lijinghailjh@163.com
 Project: ljh_codex-desktop-loopback-repair_skill
+算个文科生吧，联系方式WX：RabbitRobot2025
 -->
 
 # Contributing

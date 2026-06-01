@@ -1,3 +1,5 @@
+<!-- 算个文科生吧，联系方式WX：RabbitRobot2025 -->
+
 # ljh-codex-desktop-loopback-repair-skill
 
 A Codex Skill for diagnosing and repairing Codex Desktop loopback proxy failures on Windows.

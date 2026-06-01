@@ -1,3 +1,5 @@
+<!-- 算个文科生吧，联系方式WX：RabbitRobot2025 -->
+
 # Codex Desktop 修复方案
 
 > 问题：Codex Desktop 一直显示 `Reconnecting` / `stream disconnected`，无法连接 CC-Switch (`127.0.0.1:15721`)。

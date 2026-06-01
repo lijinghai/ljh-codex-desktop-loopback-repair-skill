@@ -1,4 +1,5 @@
 ---
+# 算个文科生吧，联系方式WX：RabbitRobot2025
 name: ljh-codex-desktop-loopback-repair-skill
 description: Diagnose and repair Codex Desktop for Windows reconnecting, stream disconnected, or local API proxy failures. Fixes AppContainer loopback isolation, Codex sandbox WFP port blocking, CC-Switch Live Takeover config conflicts, sandbox users, and netsh portproxy issues. 修复 Windows 上 Codex Desktop 一直重连、流断开、本地 127.0.0.1 代理不可达等问题。优先使用 unelevated 沙箱策略，简单可靠。
 ---
