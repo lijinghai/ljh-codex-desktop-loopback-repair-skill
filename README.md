@@ -2,6 +2,8 @@
 
 # ljh-codex-desktop-loopback-repair-skill
 
+[中文说明](#中文说明) | [English](#ljh-codex-desktop-loopback-repair-skill)
+
 A Codex Skill for diagnosing and repairing Codex Desktop loopback proxy failures on Windows.
 
 It targets three common failure modes:
@@ -9,6 +11,93 @@ It targets three common failure modes:
 1. **Reconnecting / stream disconnected** — elevated sandbox WFP blocks 15721, deadlocks with CC-Switch Live Takeover
 2. **413 Payload Too Large** — conversation context exceeds CC-Switch's 10 MB request body limit
 3. **CC-Switch credential loss** — provider becomes null or reports "No credentials" after crash
+
+## 中文说明
+
+这是一个用于修复 Windows 上 Codex Desktop 本地代理/回环访问问题的 Codex Skill。它把常见故障的诊断和修复流程整理成 Skill，并提供一个本地 Web 修复控制台，后续遇到同类问题时可以直接点按钮处理。
+
+常见适用场景：
+
+1. **Codex 一直 Reconnecting / stream disconnected**：`sandbox = "elevated"` 时，Windows 沙箱防火墙规则会阻断 `127.0.0.1:15721`，而 CC-Switch Live Takeover 又会把 `base_url` 写回 15721，形成死锁。
+2. **413 Payload Too Large**：当前会话上下文过大，请求体超过上游 API 限制，需要归档大 session 或开启新会话。
+3. **CC-Switch 凭据/Provider 丢失**：CC-Switch 崩溃或重启后，可能出现 `current_provider = null` 或 `No credentials`。
+4. **HTTP_PROXY 污染**：用户级 `HTTP_PROXY` / `HTTPS_PROXY` 指向不可用的本地端口时，会导致 CC-Switch 出站请求失败。
+
+### 中文快速安装
+
+把本仓库复制到 Codex skills 目录：
+
+```powershell
+Copy-Item -Recurse -Force .\ljh-codex-desktop-loopback-repair-skill "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill"
+```
+
+然后重启 Codex Desktop，或重新打开一个 Codex 会话。
+
+### 中文 Web 修复控制台
+
+![Codex 修复控制台](docs/repair-web.png)
+
+从仓库根目录启动：
+
+```bat
+start-repair-web.bat
+```
+
+或者直接运行 PowerShell 服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-repair-web.ps1
+```
+
+打开地址：`http://127.0.0.1:8765/`。使用时保持启动窗口不要关闭；如果想让页面同时清理防火墙规则、Sandbox 用户和 `netsh interface portproxy`，请用管理员权限启动。
+
+### 中文按钮说明
+
+| 按钮 | 功能 |
+| --- | --- |
+| 刷新状态 | 读取 `config.toml`、CC-Switch 状态、Loopback 豁免、Sandbox 守护、Portproxy、代理环境变量和大 session 文件。 |
+| 完整诊断 | 在日志面板输出当前诊断结果和建议修复方向。 |
+| 推荐一键修复 | 停止 Codex，删除用户级代理变量，切到 `sandbox = "unelevated"`，添加 Loopback 豁免；如果有管理员权限，还会清理 Sandbox 状态和旧 Portproxy，并在必要时重启 CC-Switch。 |
+| 切到 Strategy A | 应用推荐方案：使用 `unelevated` 沙箱，直接连接 CC-Switch 的 `127.0.0.1:15721`。 |
+| 安装 Sandbox 守护 | 安装并启动守护脚本，防止 CC-Switch 重启后反复把 `sandbox` 改回 `elevated`。 |
+| 修复 413 上下文 | 停止 Codex，并归档当天 `.jsonl` 会话文件，清掉过大的上下文。 |
+| 删除 HTTP_PROXY | 删除用户级 `HTTP_PROXY`、`HTTPS_PROXY`、`http_proxy`、`https_proxy`，避免 CC-Switch 出站请求被错误代理劫持。 |
+| 重启 CC-Switch | 从已知路径停止并重启 CC-Switch，适合 provider 丢失或凭据恢复失败时使用。 |
+| 测试 CC-Switch API | 向 `http://127.0.0.1:15721/v1/responses` 发送小请求，验证 CC-Switch 是否能正常转发。 |
+| 停止 Codex | 停止正在运行的 Codex 进程，方便后续修复。 |
+| 添加 Loopback 豁免 | 给当前 OpenAI/Codex MSIX 包添加 `CheckNetIsolation LoopbackExempt`。 |
+| 清理 Sandbox 状态 | 删除已知 Codex Sandbox 防火墙规则和 Sandbox 用户，需要管理员权限。 |
+| 清理旧 Portproxy | 删除旧的 `127.0.0.1:7897 -> 127.0.0.1:15721` 映射，需要管理员权限。 |
+| 启动 CC-Switch | CC-Switch 未运行时，从常见安装路径启动它。 |
+| 安装一键启动器 | 把 `start-codex.bat` 复制到 `%USERPROFILE%\.codex\start-codex.bat`。 |
+| 启用 7897 Portproxy | 启用 Legacy Strategy B，仅用于必须保留 `sandbox = "elevated"` 的场景；需要管理员权限，并且会和 CC-Switch Live Takeover 冲突。 |
+| 显示启动路径 | 在日志面板显示本地一键启动器路径。 |
+
+### 中文推荐修复顺序
+
+```text
+停止 Codex
+  ↓
+诊断 sandbox、CC-Switch、Loopback、Portproxy、Session
+  ↓
+优先切到 Strategy A：sandbox = "unelevated"，直连 15721
+  ↓
+确认 CC-Switch provider 正常；不正常则等待恢复或重启 CC-Switch
+  ↓
+如果是 413，则归档大 session 并开启新会话
+  ↓
+重新启动 Codex 并验证
+```
+
+### 中文安全提示
+
+- 修改 `config.toml` 前会先备份。
+- 不要手动和 CC-Switch 的 `base_url` 来回对抗；Live Takeover 写回 `127.0.0.1:15721` 是正常行为。
+- 推荐方案是 Strategy A：`sandbox = "unelevated"`，不依赖旧的 `7897 -> 15721` portproxy。
+- 清理防火墙规则、Sandbox 用户、Portproxy 需要管理员权限。
+- 如果只是 413，通常不是网络问题，而是上下文过大，优先清理 session 或开启新会话。
+
+[返回顶部](#ljh-codex-desktop-loopback-repair-skill)
 
 ## What This Skill Handles
 
