@@ -154,7 +154,7 @@
 
     .actions {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
       gap: 10px;
       margin-top: 14px;
     }
@@ -206,6 +206,7 @@
           <button id="clearBtn" type="button">清理 413 上下文</button>
           <button id="guardBtn" type="button">安装 Sandbox 守护</button>
           <button id="launcherBtn" type="button">安装一键启动器</button>
+          <button id="portproxyBtn" type="button">修复 Portproxy</button>
           <button id="openBtn" type="button">打开 Codex</button>
         </div>
         <p class="note" id="adminNote">如果以管理员方式启动本控制台，会额外清理防火墙规则、沙箱用户，并确保 portproxy 7897→15721 存在。</p>
@@ -220,7 +221,7 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const buttons = [$('refreshBtn'), $('repairBtn'), $('clearBtn'), $('guardBtn'), $('launcherBtn')];
+    const buttons = [$('refreshBtn'), $('repairBtn'), $('clearBtn'), $('guardBtn'), $('launcherBtn'), $('portproxyBtn')];
 
     function setBusy(busy) {
       buttons.forEach((button) => button.disabled = busy);
@@ -361,11 +362,29 @@
       }
     }
 
+    async function fixPortproxy() {
+      setBusy(true);
+      $('log').textContent = '修复 Portproxy 7897→15721...';
+      try {
+        const data = await request('/api/fix-portproxy', 'POST');
+        (data.log || []).forEach(line);
+        renderStatus(data.status);
+        if (data.ok) {
+          line('完成。Portproxy 7897→15721 已就绪。');
+        }
+      } catch (error) {
+        line(`修复失败：${error.message} —— 可能需要管理员权限`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
     $('refreshBtn').addEventListener('click', refresh);
     $('repairBtn').addEventListener('click', repair);
     $('clearBtn').addEventListener('click', clear413);
     $('guardBtn').addEventListener('click', installGuard);
     $('launcherBtn').addEventListener('click', installLauncher);
+    $('portproxyBtn').addEventListener('click', fixPortproxy);
     $('openBtn').addEventListener('click', () => line('请从开始菜单打开 Codex Desktop；或双击 %USERPROFILE%\\.codex\\start-codex.bat。'));
 
     refresh();

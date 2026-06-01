@@ -281,6 +281,26 @@ function Clear-Context413 {
     }
 }
 
+function Repair-Portproxy {
+    $log = [System.Collections.Generic.List[string]]::new()
+    $isAdmin = Test-IsAdmin
+
+    if (-not $isAdmin) {
+        Add-Log $log "Portproxy 修改需要管理员权限。请以管理员重新运行本工具。"
+        return @{ ok = $false; log = $log; status = Get-RepairStatus }
+    }
+
+    try {
+        netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1 | Out-Null
+        netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 connectport=15721 connectaddress=127.0.0.1
+        Add-Log $log "Portproxy 7897→15721 已创建/刷新。"
+    } catch {
+        Add-Log $log "Portproxy 设置失败: $($_.Exception.Message)"
+    }
+
+    return @{ ok = $true; log = $log; status = Get-RepairStatus }
+}
+
 function Send-Response {
     param($Client, [int]$StatusCode, [string]$ContentType, [string]$Body)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Body)
@@ -361,6 +381,8 @@ try {
                 Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Install-SandboxGuard))
             } elseif ($method -eq "POST" -and $path -eq "/api/install-launcher") {
                 Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Install-Launcher))
+            } elseif ($method -eq "POST" -and $path -eq "/api/fix-portproxy") {
+                Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Repair-Portproxy))
             } else {
                 Send-Response $client 404 "application/json" '{"ok":false,"error":"not found"}'
             }
