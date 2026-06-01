@@ -305,6 +305,14 @@ if (-not (Test-Path $pagePath)) {
     exit 1
 }
 
+# Kill any existing process on this port so we can bind
+$existing = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($existing) {
+    Write-Host "Port $Port is in use by PID $($existing.OwningProcess), stopping it..."
+    Stop-Process -Id $existing.OwningProcess -Force -ErrorAction SilentlyContinue
+    Start-Sleep 1
+}
+
 $address = [Net.IPAddress]::Parse("127.0.0.1")
 $listener = [Net.Sockets.TcpListener]::new($address, $Port)
 $prefix = "http://127.0.0.1:$Port/"
@@ -312,57 +320,83 @@ $prefix = "http://127.0.0.1:$Port/"
 try {
     $listener.Start()
 } catch {
-    Write-Error "Could not start repair web server on $prefix. Try another -Port. $($_.Exception.Message)"
+    Write-Error "Could not start repair web server on $prefix. $($_.Exception.Message)"
     exit 1
 }
 
-Write-Host "Codex repair web is running: $prefix"
+Write-Host "Codex repair web panel: $prefix"
 Write-Host "Press Ctrl+C to stop."
 if (-not $NoBrowser) { Start-Process $prefix }
 
-$running = $true
-while ($running) {
-    $client = $null
-    try {
-        $client = $listener.AcceptTcpClient()
-        $client.ReceiveTimeout = 5000
-        $stream = $client.GetStream()
-        $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII, $false, 1024, $true)
-        $requestLine = $reader.ReadLine()
-        if (-not $requestLine) {
-            $client.Close()
+# Ctrl+C handler — clean shutdown
+$ctrlC = $false
+[Console]::TreatControlCAsInput = $false
+$null = Register-EngineEvent -SourceIdentifier ([System.Management.Automation.EngineIntrinsics]::EscapeStateChangeEvent) -Action {
+    $script:ctrlC = $true
+}
+
+try {
+    while (-not $ctrlC) {
+        $client = $null
+        try {
+            if ($listener.Pending()) {
+                $client = $listener.AcceptTcpClient()
+            } else {
+                Start-Sleep -Milliseconds 200
+                continue
+            }
+        } catch {
+            if ($ctrlC) { break }
+            Start-Sleep -Milliseconds 200
             continue
         }
 
-        while ($true) {
-            $header = $reader.ReadLine()
-            if ($null -eq $header -or $header -eq "") { break }
-        }
+        if ($client -eq $null) { continue }
 
-        $parts = $requestLine.Split(' ')
-        $method = $parts[0]
-        $path = ($parts[1] -split '\?')[0]
+        try {
+            $client.ReceiveTimeout = 5000
+            $stream = $client.GetStream()
+            $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII, $false, 1024, $true)
+            $requestLine = $reader.ReadLine()
+            if (-not $requestLine) {
+                $client.Close()
+                continue
+            }
 
-        if ($method -eq "GET" -and ($path -eq "/" -or $path -eq "/repair.html")) {
-            Send-Response $client 200 "text/html" (Get-Content -LiteralPath $pagePath -Raw -Encoding UTF8)
-        } elseif ($method -eq "GET" -and $path -eq "/api/status") {
-            Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Get-RepairStatus))
-        } elseif ($method -eq "POST" -and $path -eq "/api/repair") {
-            Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Repair-Codex))
-        } elseif ($method -eq "POST" -and $path -eq "/api/clear-413") {
-            Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Clear-Context413))
-        } elseif ($method -eq "POST" -and $path -eq "/api/install-guard") {
-            Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Install-SandboxGuard))
-        } elseif ($method -eq "POST" -and $path -eq "/api/install-launcher") {
-            Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Install-Launcher))
-        } else {
-            Send-Response $client 404 "application/json" '{"ok":false,"error":"not found"}'
+            while ($true) {
+                $header = $reader.ReadLine()
+                if ($null -eq $header -or $header -eq "") { break }
+            }
+
+            $parts = $requestLine.Split(' ')
+            $method = $parts[0]
+            $path = ($parts[1] -split '\?')[0]
+
+            if ($method -eq "GET" -and ($path -eq "/" -or $path -eq "/repair.html")) {
+                Send-Response $client 200 "text/html" (Get-Content -LiteralPath $pagePath -Raw -Encoding UTF8)
+            } elseif ($method -eq "GET" -and $path -eq "/api/status") {
+                Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Get-RepairStatus))
+            } elseif ($method -eq "POST" -and $path -eq "/api/repair") {
+                Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Repair-Codex))
+            } elseif ($method -eq "POST" -and $path -eq "/api/clear-413") {
+                Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Clear-Context413))
+            } elseif ($method -eq "POST" -and $path -eq "/api/install-guard") {
+                Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Install-SandboxGuard))
+            } elseif ($method -eq "POST" -and $path -eq "/api/install-launcher") {
+                Send-Response $client 200 "application/json" (ConvertTo-ResultJson (Install-Launcher))
+            } else {
+                Send-Response $client 404 "application/json" '{"ok":false,"error":"not found"}'
+            }
+        } catch {
+            if ($client -and -not $ctrlC) {
+                Send-Response $client 500 "application/json" (ConvertTo-ResultJson @{ ok = $false; error = $_.Exception.Message })
+            }
+        } finally {
+            if ($client) { $client.Close() }
         }
-    } catch {
-        if ($client) {
-            Send-Response $client 500 "application/json" (ConvertTo-ResultJson @{ ok = $false; error = $_.Exception.Message })
-        }
-    } finally {
-        if ($client) { $client.Close() }
     }
+} finally {
+    Write-Host "Shutting down..."
+    $listener.Stop()
+    Get-EventSubscriber | Unregister-Event -Force -ErrorAction SilentlyContinue
 }
