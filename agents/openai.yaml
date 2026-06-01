@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Desktop Loopback Repair"
   short_description: "Repair Codex Desktop Windows loopback proxy failures"
-  default_prompt: "Use $ljh-codex-desktop-loopback-repair-skill to diagnose and repair Codex Desktop reconnecting or stream disconnected errors on Windows, especially AppContainer loopback, sandbox WFP rules, portproxy 7897 to 15721, and Clash port conflicts."
+  default_prompt: "Use $ljh-codex-desktop-loopback-repair-skill to diagnose and repair Codex Desktop reconnecting or stream disconnected errors on Windows. Prioritize Strategy A (sandbox=unelevated + direct CC-Switch connection) unless elevated sandbox is explicitly required. Handle AppContainer loopback exemption, sandbox WFP rule cleanup, CC-Switch Live Takeover awareness, and CC-Switch crash recovery."

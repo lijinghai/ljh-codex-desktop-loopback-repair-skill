@@ -6,37 +6,30 @@ It targets the common case where Codex Desktop keeps showing `Reconnecting` or `
 
 ## What This Skill Handles
 
-- Windows Store / MSIX AppContainer loopback isolation
-- Codex sandbox firewall/WFP rules that block local loopback ports
-- Codex sandbox users such as `CodexSandboxOffline` and `CodexSandboxOnline`
-- `config.toml` provider `base_url` issues
-- `netsh interface portproxy` forwarding problems
-- Clash / Clash Verge port conflicts with Codex
-- CC-Switch style local backend proxies, commonly on `127.0.0.1:15721`
+- **CC-Switch Live Takeover** — recognizes when CC-Switch is managing Codex config and adapts strategy accordingly
+- **Codex sandbox mode** — switches from `elevated` (WFP port blocking) to `unelevated` (no port blocking for main process)
+- **Windows Store / MSIX AppContainer loopback isolation** — adds `CheckNetIsolation LoopbackExempt`
+- **Codex sandbox firewall/WFP rules** — removes `codex_sandbox_offline_block_*` rules
+- **Codex sandbox users** — removes `CodexSandboxOffline` and `CodexSandboxOnline`
+- **`config.toml`** — backs up and patches sandbox mode without breaking CC-Switch integrations
+- **`netsh interface portproxy`** — for legacy elevated-sandbox setups requiring port 7897 forwarding
+- **CC-Switch crash recovery** — detects provider loss and guides recovery
 
-## Key Finding
+## Key Insight
 
-On affected Codex Desktop Windows setups, the Codex sandbox log can show:
+The root cause is a deadlock between two systems:
 
-```text
-RemotePorts=1-7896,7898-65535
-```
+1. **Codex elevated sandbox** blocks all loopback ports except 7897
+2. **CC-Switch Live Takeover** forces `base_url` to `http://127.0.0.1:15721/v1`
 
-That means the sandbox blocks loopback ports `1-7896` and `7898-65535`, leaving `7897` as the usable Codex-facing port.
+The fix: set `sandbox = "unelevated"` — the main Codex process is no longer subject to WFP port filtering, so it can reach CC-Switch on 15721 directly. No portproxy needed.
 
-When this pattern is present, use this layout:
+## Two Repair Strategies
 
-| Port | Purpose |
-| --- | --- |
-| `7897` | Codex-facing port, forwarded to the backend proxy |
-| `15721` | CC-Switch or local OpenAI-compatible backend |
-| `7890` | Clash mixed-port after moving Clash away from `7897` |
-
-Recommended request flow:
-
-```text
-Codex Desktop -> 127.0.0.1:7897 -> netsh portproxy -> 127.0.0.1:15721 -> CC-Switch
-```
+| Strategy | Sandbox | Portproxy | CC-Switch Compatible | Complexity |
+| --- | --- | --- | --- | --- |
+| **A (Recommended)** | unelevated | Not needed | Yes | Low |
+| B (Legacy) | elevated | 7897→15721 | No (conflict) | High |
 
 ## Installation
 
@@ -46,39 +39,35 @@ Copy this repository folder into your Codex skills directory:
 Copy-Item -Recurse -Force .\ljh-codex-desktop-loopback-repair-skill "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill"
 ```
 
-Then restart Codex Desktop or open a new Codex session so the skill metadata is reloaded.
+Then restart Codex Desktop or open a new Codex session.
 
 ## Usage
 
-Ask Codex:
-
 ```text
-Use $ljh-codex-desktop-loopback-repair-skill to diagnose and repair Codex Desktop reconnecting or stream disconnected errors on Windows.
+Use $ljh-codex-desktop-loopback-repair-skill to fix Codex Desktop reconnecting on Windows.
 ```
 
-For the CC-Switch case:
+With CC-Switch context:
 
 ```text
-I use CC-Switch on 127.0.0.1:15721. Use $ljh-codex-desktop-loopback-repair-skill to fix Codex Desktop reconnecting on Windows, including AppContainer loopback, sandbox WFP rules, portproxy, config.toml, and Clash port conflicts.
+I use CC-Switch on 127.0.0.1:15721. Use $ljh-codex-desktop-loopback-repair-skill to fix Codex Desktop reconnecting.
 ```
 
 ## Safety Notes
 
-This skill is intentionally conservative:
+- Inspect current state before changing anything
+- Stop Codex Desktop before cleaning sandbox users or firewall/WFP state
+- Back up `%USERPROFILE%\.codex\config.toml` before edits
+- Keep unrelated Codex config intact
+- Resolve the current Codex `PackageFullName` dynamically — never hard-code it
+- Delete only known Codex sandbox rules or exact sandbox user names
+- Do NOT fight CC-Switch's base_url — use Strategy A instead
 
-- Inspect current state before changing anything.
-- Stop Codex Desktop before cleaning sandbox users or firewall/WFP state.
-- Back up `%USERPROFILE%\.codex\config.toml` before edits.
-- Keep unrelated Codex config intact.
-- Resolve the current Codex `PackageFullName` dynamically instead of hard-coding it.
-- If the sandbox log proves only `7897` is allowed, reserve `7897` for Codex and move Clash to another port such as `7890`.
-- Delete only known Codex sandbox rules or exact sandbox user names.
-
-Some repair commands require Administrator PowerShell, especially `netsh`, firewall changes, `CheckNetIsolation`, and `net user` operations.
+Some repair commands require Administrator PowerShell.
 
 ## Repository Layout
 
-```text
+```
 .
 ├── SKILL.md
 ├── agents/
@@ -97,13 +86,9 @@ Some repair commands require Administrator PowerShell, especially `netsh`, firew
 
 ## Validation
 
-Run the bundled validator before publishing or opening a pull request:
-
 ```powershell
 python .\scripts\validate_skill.py .
 ```
-
-The GitHub Actions workflow runs the same validation on push and pull request.
 
 ## License
 
