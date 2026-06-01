@@ -22,6 +22,8 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **CRITICAL: CC-Switch Live Takeover writes `sandbox = "elevated"`** — This is the ROOT CAUSE of recurring failures. Every time CC-Switch restarts (crash, reboot, manual restart), it writes `sandbox = "elevated"` into `config.toml`, undoing any manual fix. The permanent solution requires a **sandbox guard** that monitors `config.toml` and auto-corrects sandbox back to `"unelevated"` whenever CC-Switch changes it.
 
+**HTTP_PROXY kills CC-Switch outbound** — If `HTTP_PROXY` or `HTTPS_PROXY` environment variable is set to `http://127.0.0.1:XXXX`, CC-Switch routes ALL outbound API requests through that proxy. If nothing is listening there, CC-Switch fails with `"连接失败"`. Curl and browsers are unaffected (they don't auto-use these vars), making this very hard to diagnose. Fix: delete the env var.
+
 ## Quick Auto-Fix Flow
 
 When invoked, follow this priority order. Stop at the first step that resolves the issue:
@@ -68,6 +70,7 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | Error contains `413 Payload Too Large` | Request body > 10 MB | Go to Step 6 (Context too large) |
 | Loopback exemption missing | AppContainer isolation blocks loopback | Go to Step 3d |
 | Portproxy `7897→15721` exists | Legacy Strategy B artifact | Can be cleaned (Step 3e) |
+| CC-Switch reports `"连接失败"` but curl can reach upstream | `HTTP_PROXY` env var poisoning outbound | Go to Step 4d (Remove HTTP_PROXY) |
 
 ### Step 3: Strategy A — Unelevated Sandbox (Primary Fix)
 
@@ -188,6 +191,36 @@ Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -Conte
 ```
 
 Expected: a JSON response with model output (e.g., `"Hi! How can I help?"`), NOT a `proxy_error`.
+
+#### 4d. Remove HTTP_PROXY (Fixes CC-Switch Outbound)
+
+If CC-Switch `/status` is healthy but API test fails with `"连接失败"` while `curl` directly to the upstream works, check for proxy env vars poisoning CC-Switch's outbound:
+
+```powershell
+# Check for proxy env vars
+[Environment]::GetEnvironmentVariable('HTTP_PROXY', 'User')
+[Environment]::GetEnvironmentVariable('HTTPS_PROXY', 'User')
+```
+
+If any are set to `http://127.0.0.1:XXXX`:
+
+```powershell
+# Remove them — they break CC-Switch's outbound connections
+[Environment]::SetEnvironmentVariable('HTTP_PROXY', $null, 'User')
+[Environment]::SetEnvironmentVariable('HTTPS_PROXY', $null, 'User')
+[Environment]::SetEnvironmentVariable('http_proxy', $null, 'User')
+[Environment]::SetEnvironmentVariable('https_proxy', $null, 'User')
+
+# Also clear from current session
+Remove-Item Env:HTTP_PROXY, Env:HTTPS_PROXY, Env:http_proxy, Env:https_proxy -ErrorAction SilentlyContinue
+
+# Restart CC-Switch for changes to take effect
+Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep 2
+$path = (Get-Process cc-switch -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+if (-not $path) { $path = @("F:\CC\cc-switch.exe", "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
+if ($path) { Start-Process $path -WindowStyle Hidden }
+```
 
 ### Step 5: Start Codex In Order
 

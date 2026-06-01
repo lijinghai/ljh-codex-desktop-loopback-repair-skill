@@ -124,8 +124,14 @@ if ($path) { Start-Process $path -WindowStyle Hidden }
 
 ### 验证 CC-Switch 转发正常
 
-```cmd
-curl -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d "{\"model\":\"gpt-5.5\",\"input\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_output_tokens\":10}" --max-time 15
+```powershell
+$body = @{
+    model = "gpt-5.5"
+    input = @(@{ role = "user"; content = "hi" })
+    max_output_tokens = 10
+} | ConvertTo-Json -Depth 5 -Compress
+
+Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 15 | ConvertTo-Json -Depth 5 -Compress
 ```
 
 应该返回模型输出（如 `Hi! How can I help?`），而不是 `proxy_error`。
@@ -149,8 +155,10 @@ Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -Filter "*.jsonl" | Wh
 # 3. 归档今天的会话，清零上下文
 $today = Get-Date -Format "yyyy\MM\dd"
 $src = "$env:USERPROFILE\.codex\sessions\$today"
+$archive = "$env:USERPROFILE\.codex\archived_sessions"
 if (Test-Path $src) {
-    Move-Item "$src\*.jsonl" "$env:USERPROFILE\.codex\archived_sessions\" -Force
+    New-Item -ItemType Directory -Force -Path $archive | Out-Null
+    Get-ChildItem $src -Filter "*.jsonl" -File | Move-Item -Destination $archive -Force
     Write-Host "已归档今天的会话 — 上下文已清零"
 }
 
@@ -229,8 +237,9 @@ findstr base_url %USERPROFILE%\.codex\config.toml
 :: 检查 CC-Switch 状态
 curl -s http://127.0.0.1:15721/status
 
-:: 测试 API 转发
-curl -s -X POST http://127.0.0.1:15721/v1/responses -H "Content-Type: application/json" -d "{\"model\":\"gpt-5.5\",\"input\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_output_tokens\":10}" --max-time 15
+:: 测试 API 转发（PowerShell）
+$body = @{ model = "gpt-5.5"; input = @(@{ role = "user"; content = "hi" }); max_output_tokens = 10 } | ConvertTo-Json -Depth 5 -Compress
+Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 15 | ConvertTo-Json -Depth 5 -Compress
 
 :: 检查 loopback 豁免
 CheckNetIsolation LoopbackExempt -s | findstr codex

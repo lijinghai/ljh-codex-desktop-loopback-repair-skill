@@ -54,6 +54,24 @@ Then restart Codex Desktop or open a new Codex session.
 
 ## Usage
 
+Local one-click web repair panel:
+
+```bat
+start-repair-web.bat
+```
+
+Keep the BAT window open while using the page. Press `Ctrl+C` in that window to stop the local repair web server.
+
+PowerShell equivalent:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-repair-web.ps1
+```
+
+Then open `http://127.0.0.1:8765/` and click **一键修复**.
+
+Run the PowerShell command as Administrator if you also want the panel to clean Codex sandbox firewall rules, sandbox users, and legacy `7897 -> 15721` portproxy state. Without Administrator rights, it still backs up and patches `config.toml`, adds the loopback exemption when possible, checks CC-Switch, and can archive oversized 413 sessions.
+
 Basic repair:
 
 ```text

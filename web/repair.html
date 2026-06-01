@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex 一键修复</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #20242a;
+      --muted: #64707d;
+      --line: #dfe4ea;
+      --accent: #0d766e;
+      --accent-dark: #075e58;
+      --warn: #9a5a00;
+      --bad: #a73535;
+      --good: #167044;
+      --code: #101820;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    main {
+      width: min(1120px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 36px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 0 0 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(26px, 4vw, 42px);
+      line-height: 1.1;
+    }
+
+    .subtitle {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    button {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 16px;
+      font: inherit;
+      font-weight: 650;
+      background: var(--panel);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    button:hover { border-color: #aeb8c2; }
+    button:disabled { cursor: wait; opacity: .64; }
+
+    .primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: white;
+    }
+
+    .primary:hover { background: var(--accent-dark); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.05fr .95fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .item {
+      min-height: 74px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #fbfcfd;
+    }
+
+    .label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 7px;
+    }
+
+    .value {
+      overflow-wrap: anywhere;
+      font-size: 14px;
+      font-weight: 650;
+      line-height: 1.35;
+    }
+
+    .good { color: var(--good); }
+    .warn { color: var(--warn); }
+    .bad  { color: var(--bad); }
+
+    .log {
+      min-height: 338px;
+      max-height: 520px;
+      overflow: auto;
+      margin: 0;
+      padding: 14px;
+      border-radius: 6px;
+      background: var(--code);
+      color: #d8e5e3;
+      font: 13px/1.55 Consolas, "Cascadia Mono", monospace;
+      white-space: pre-wrap;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .note {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 820px) {
+      header { align-items: stretch; flex-direction: column; }
+      .toolbar { justify-content: stretch; }
+      .toolbar button, .actions button { width: 100%; }
+      .grid { grid-template-columns: 1fr; }
+      .status-grid { grid-template-columns: 1fr; }
+      .actions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Codex 一键修复</h1>
+        <p class="subtitle">修复 reconnecting、413 上下文过大、CC-Switch 崩溃。含 sandbox 永久守护。</p>
+      </div>
+      <div class="toolbar">
+        <button id="refreshBtn" type="button">刷新状态</button>
+        <button id="repairBtn" class="primary" type="button">一键修复</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section>
+        <h2>当前状态</h2>
+        <div class="status-grid">
+          <div class="item"><span class="label">沙箱模式</span><span id="sandbox" class="value">检查中</span></div>
+          <div class="item"><span class="label">CC-Switch</span><span id="cc" class="value">检查中</span></div>
+          <div class="item"><span class="label">base_url</span><span id="baseUrl" class="value">检查中</span></div>
+          <div class="item"><span class="label">Loopback 豁免</span><span id="loopback" class="value">检查中</span></div>
+          <div class="item"><span class="label">Sandbox 守护</span><span id="guard" class="value">检查中</span></div>
+          <div class="item"><span class="label">旧 portproxy</span><span id="portproxy" class="value">检查中</span></div>
+          <div class="item"><span class="label">大会话文件</span><span id="sessions" class="value">检查中</span></div>
+          <div class="item"><span class="label">提供商</span><span id="provider" class="value">检查中</span></div>
+        </div>
+        <div class="actions">
+          <button id="clearBtn" type="button">清理 413 上下文</button>
+          <button id="guardBtn" type="button">安装 Sandbox 守护</button>
+          <button id="launcherBtn" type="button">安装一键启动器</button>
+          <button id="openBtn" type="button">打开 Codex</button>
+        </div>
+        <p class="note" id="adminNote">如果以管理员方式启动本控制台，会额外清理防火墙规则、沙箱用户和旧 portproxy。</p>
+      </section>
+
+      <section>
+        <h2>执行日志</h2>
+        <pre id="log" class="log">等待操作...</pre>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const buttons = [$('refreshBtn'), $('repairBtn'), $('clearBtn'), $('guardBtn'), $('launcherBtn')];
+
+    function setBusy(busy) {
+      buttons.forEach((button) => button.disabled = busy);
+    }
+
+    function line(text) {
+      const log = $('log');
+      log.textContent = `${log.textContent}\n${text}`.trim();
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function setValue(id, text, state) {
+      const el = $(id);
+      el.textContent = text;
+      el.className = `value ${state || ''}`.trim();
+    }
+
+    function renderStatus(data) {
+      setValue('sandbox', data.sandbox === 'unelevated'
+        ? 'unelevated，正常'
+        : `${data.sandbox}，需要修复`,
+        data.sandbox === 'unelevated' ? 'good' : (data.sandbox === 'elevated' ? 'bad' : 'warn'));
+
+      setValue('cc', data.ccSwitchHealthy
+        ? `正常：${data.provider}`
+        : (data.ccSwitchRunning ? `异常：${data.lastError || 'provider 未就绪'}` : '未运行，需要启动'),
+        data.ccSwitchHealthy ? 'good' : (data.ccSwitchRunning ? 'warn' : 'bad'));
+
+      setValue('baseUrl', data.baseUrl || '未找到',
+        data.baseUrl && data.baseUrl.includes('15721') ? 'good' : 'warn');
+
+      setValue('loopback', data.hasLoopback ? '已存在' : '未发现',
+        data.hasLoopback ? 'good' : 'warn');
+
+      setValue('guard', data.guardInstalled
+        ? (data.guardRunning ? '守护运行中' : '已安装但未运行')
+        : '未安装，建议安装',
+        data.guardRunning ? 'good' : (data.guardInstalled ? 'warn' : 'warn'));
+
+      setValue('portproxy', data.hasLegacyPortproxy ? '存在 7897 -> 15721' : '无残留',
+        data.hasLegacyPortproxy ? 'warn' : 'good');
+
+      const sc = data.largeSessions;
+      setValue('sessions', sc && sc.length
+        ? `${sc.length} 个超过 5MB（最大 ${sc[0].mb}MB）`
+        : '未发现超过 5MB',
+        sc && sc.length ? 'warn' : 'good');
+
+      setValue('provider', (data.ccSwitchRunning && data.provider && data.provider !== 'none')
+        ? data.provider : '未知', data.ccSwitchHealthy ? 'good' : 'warn');
+
+      $('adminNote').textContent = data.isAdmin
+        ? '当前已用管理员权限运行：可清理防火墙规则、沙箱用户和旧 portproxy。'
+        : '当前不是管理员权限：会修复主要配置；防火墙规则、沙箱用户和旧 portproxy 会跳过。建议以管理员运行以完整修复。';
+    }
+
+    async function request(path, method = 'GET') {
+      const response = await fetch(path, { method });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    async function refresh() {
+      setBusy(true);
+      try {
+        const data = await request('/api/status');
+        renderStatus(data);
+        line(`[${data.checkedAt}] 状态已刷新。`);
+      } catch (error) {
+        line(`状态刷新失败：${error.message} —— 后端服务是否在运行？`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function repair() {
+      setBusy(true);
+      $('log').textContent = '开始一键修复...';
+      try {
+        const data = await request('/api/repair', 'POST');
+        (data.log || []).forEach(line);
+        renderStatus(data.status);
+        line('---');
+        line('一键修复完成。');
+        if (!data.status.guardInstalled) {
+          line('提示：点击"安装 Sandbox 守护"来防止 CC-Switch 反复改回 elevated。');
+        }
+        line('请重新打开 Codex Desktop。');
+      } catch (error) {
+        line(`修复失败：${error.message}`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function clear413() {
+      setBusy(true);
+      $('log').textContent = '开始清理 413 上下文...';
+      try {
+        const data = await request('/api/clear-413', 'POST');
+        (data.log || []).forEach(line);
+        renderStatus(data.status);
+        line('完成。请重新打开 Codex Desktop。');
+      } catch (error) {
+        line(`清理失败：${error.message}`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function installGuard() {
+      setBusy(true);
+      $('log').textContent = '安装 Sandbox 守护...';
+      try {
+        const data = await request('/api/install-guard', 'POST');
+        (data.log || []).forEach(line);
+        renderStatus(data.status);
+        line('完成。守护进程已安装并启动，开机自启。');
+      } catch (error) {
+        line(`安装失败：${error.message} —— 可能 API 不支持，请检查后端版本`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function installLauncher() {
+      setBusy(true);
+      $('log').textContent = '安装一键启动器...';
+      try {
+        const data = await request('/api/install-launcher', 'POST');
+        (data.log || []).forEach(line);
+        line('完成。start-codex.bat 已安装到 .codex 目录。');
+        line('双击该文件即可按正确顺序启动所有组件。');
+      } catch (error) {
+        line(`安装失败：${error.message}`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    $('refreshBtn').addEventListener('click', refresh);
+    $('repairBtn').addEventListener('click', repair);
+    $('clearBtn').addEventListener('click', clear413);
+    $('guardBtn').addEventListener('click', installGuard);
+    $('launcherBtn').addEventListener('click', installLauncher);
+    $('openBtn').addEventListener('click', () => line('请从开始菜单打开 Codex Desktop；或双击 %USERPROFILE%\\.codex\\start-codex.bat。'));
+
+    refresh();
+  </script>
+</body>
+</html>
