@@ -167,7 +167,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-repair-web.ps1
 
 Then open `http://127.0.0.1:8765/` and click **一键修复**.
 
-Run the PowerShell command as Administrator if you also want the panel to clean Codex sandbox firewall rules, sandbox users, and legacy `7897 -> 15721` portproxy state. Without Administrator rights, it still backs up and patches `config.toml`, adds the loopback exemption when possible, checks CC-Switch, and can archive oversized 413 sessions.
+Run the PowerShell command as Administrator if you also want the panel to clean Codex sandbox firewall rules, sandbox users, and `7897 -> 15721` portproxy state. Without Administrator rights, it still backs up and patches `config.toml`, adds the loopback exemption when possible, checks CC-Switch, and can archive oversized 413 sessions.
 
 ### Web Repair Panel
 

@@ -252,7 +252,7 @@
             <div class="item"><span class="label">PROXY_MANAGED</span><span id="token" class="value">检查中</span></div>
             <div class="item"><span class="label">Loopback 豁免</span><span id="loopback" class="value">检查中</span></div>
             <div class="item"><span class="label">Sandbox 守护</span><span id="guard" class="value">检查中</span></div>
-            <div class="item"><span class="label">Legacy Portproxy</span><span id="portproxy" class="value">检查中</span></div>
+            <div class="item"><span class="label">Portproxy 转发</span><span id="portproxy" class="value">检查中</span></div>
             <div class="item"><span class="label">大 Session</span><span id="sessions" class="value">检查中</span></div>
             <div class="item"><span class="label">HTTP_PROXY</span><span id="proxy" class="value">检查中</span></div>
             <div class="item"><span class="label">管理员权限</span><span id="admin" class="value">检查中</span></div>
@@ -278,7 +278,7 @@
               <button id="stopBtn" type="button">停止 Codex</button>
               <button id="loopbackBtn" type="button">添加 Loopback 豁免</button>
               <button id="cleanSandboxBtn" type="button">清理 Sandbox 状态</button>
-              <button id="cleanPortproxyBtn" type="button">清理旧 Portproxy</button>
+              <button id="cleanPortproxyBtn" type="button">重置 Portproxy</button>
               <button id="startCcBtn" type="button">启动 CC-Switch</button>
               <button id="launcherBtn" type="button">安装一键启动器</button>
             </div>
@@ -399,7 +399,7 @@
     $('stopBtn').addEventListener('click', () => runAction('/api/stop-codex', '停止 Codex...', 'Codex 停止动作完成。'));
     $('loopbackBtn').addEventListener('click', () => runAction('/api/add-loopback', '添加 Loopback 豁免...', 'Loopback 豁免处理完成。'));
     $('cleanSandboxBtn').addEventListener('click', () => runAction('/api/clean-sandbox', '清理 Sandbox 状态...', 'Sandbox 状态清理完成。'));
-    $('cleanPortproxyBtn').addEventListener('click', () => runAction('/api/clean-portproxy', '清理旧 Portproxy...', '旧 Portproxy 清理完成。'));
+    $('cleanPortproxyBtn').addEventListener('click', () => runAction('/api/clean-portproxy', '重置 Portproxy 7897→15721...', 'Portproxy 已重置。'));
     $('startCcBtn').addEventListener('click', () => runAction('/api/start-ccswitch', '启动 CC-Switch...', 'CC-Switch 启动动作完成。'));
     $('launcherBtn').addEventListener('click', () => runAction('/api/install-launcher', '安装一键启动器...', 'start-codex.bat 已安装到 .codex 目录。'));
     $('strategyBBtn').addEventListener('click', () => runAction('/api/strategy-b', '启用 Legacy Strategy B...', 'Strategy B 已处理。'));

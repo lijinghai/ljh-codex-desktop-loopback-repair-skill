@@ -157,18 +157,18 @@ function Clean-SandboxState {
     return $true
 }
 
-function Remove-LegacyPortproxy {
+function Remove-Portproxy {
     param([System.Collections.Generic.List[string]]$Log)
     if (-not (Test-IsAdmin)) {
         Add-Log $Log "Administrator rights are required to delete netsh portproxy entries."
         return $false
     }
     netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1 | Out-Null
-    Add-Log $Log "Deleted legacy portproxy 127.0.0.1:7897 -> 127.0.0.1:15721 if it existed."
+    Add-Log $Log "Deleted portproxy 127.0.0.1:7897 -> 127.0.0.1:15721 if it existed."
     return $true
 }
 
-function Set-LegacyPortproxy {
+function Set-Portproxy {
     param([System.Collections.Generic.List[string]]$Log)
     if (-not (Test-IsAdmin)) {
         Add-Log $Log "Administrator rights are required to set netsh portproxy entries."
@@ -177,7 +177,7 @@ function Set-LegacyPortproxy {
     netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1 | Out-Null
     netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 connectport=15721 connectaddress=127.0.0.1 | Out-Null
     netsh advfirewall firewall add rule name="Allow Codex Proxy 7897" dir=in action=allow protocol=tcp localport=7897 | Out-Null
-    Add-Log $Log "Created legacy portproxy 127.0.0.1:7897 -> 127.0.0.1:15721 and allowed local port 7897."
+    Add-Log $Log "Created portproxy 127.0.0.1:7897 -> 127.0.0.1:15721 and allowed local port 7897."
     return $true
 }
 
@@ -295,7 +295,7 @@ function Invoke-Diagnose {
     Add-Log $log "sandbox=$($status.sandbox), base_url=$($status.baseUrl), PROXY_MANAGED=$($status.tokenManaged)."
     Add-Log $log "CC-Switch running=$($status.ccSwitchRunning), healthy=$($status.ccSwitchHealthy), provider=$($status.provider), last_error=$($status.lastError)."
     Add-Log $log "Loopback exemption found=$($status.hasLoopback)."
-    Add-Log $log "Legacy portproxy found=$($status.hasPortproxy)."
+    Add-Log $log "portproxy found=$($status.hasPortproxy)."
     Add-Log $log "Sandbox guard installed=$($status.guardInstalled), running=$($status.guardRunning)."
     Add-Log $log "Large session files over 5MB: $($status.largeSessions.Count)."
     if ($status.proxyVars.Count -gt 0) { Add-Log $log "Proxy variables: $($status.proxyVars -join '; ')." }
@@ -310,7 +310,7 @@ function Invoke-StrategyA {
     Set-SandboxMode "unelevated" $log
     Add-LoopbackExemption $log
     Clean-SandboxState $log | Out-Null
-    Remove-LegacyPortproxy $log | Out-Null
+    Set-Portproxy $log | Out-Null
     return (New-ActionResult $log)
 }
 
@@ -321,7 +321,7 @@ function Invoke-RecommendedRepair {
     Set-SandboxMode "unelevated" $log
     Add-LoopbackExemption $log
     Clean-SandboxState $log | Out-Null
-    Remove-LegacyPortproxy $log | Out-Null
+    Set-Portproxy $log | Out-Null
 
     $cc = Get-CcSwitchStatus
     if (-not $cc -or -not $cc.current_provider -or $cc.last_error) {
@@ -341,7 +341,7 @@ function Invoke-StrategyB {
     Stop-CodexProcesses $log
     Set-SandboxMode "elevated" $log
     Set-BaseUrlForStrategyB $log
-    Set-LegacyPortproxy $log | Out-Null
+    Set-Portproxy $log | Out-Null
     Add-LoopbackExemption $log
     Clean-SandboxState $log | Out-Null
     return (New-ActionResult $log)
@@ -596,7 +596,7 @@ function Invoke-Route {
     if ($Method -eq "POST" -and $Path -eq "/api/stop-codex") { $log = [System.Collections.Generic.List[string]]::new(); Stop-CodexProcesses $log; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
     if ($Method -eq "POST" -and $Path -eq "/api/add-loopback") { $log = [System.Collections.Generic.List[string]]::new(); Add-LoopbackExemption $log; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
     if ($Method -eq "POST" -and $Path -eq "/api/clean-sandbox") { $log = [System.Collections.Generic.List[string]]::new(); Clean-SandboxState $log | Out-Null; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
-    if ($Method -eq "POST" -and $Path -eq "/api/clean-portproxy") { $log = [System.Collections.Generic.List[string]]::new(); Remove-LegacyPortproxy $log | Out-Null; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
+    if ($Method -eq "POST" -and $Path -eq "/api/clean-portproxy") { $log = [System.Collections.Generic.List[string]]::new(); Set-Portproxy $log | Out-Null; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
     if ($Method -eq "POST" -and $Path -eq "/api/upstream-check") { return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (Test-UpstreamConnectivity)) } }
     if ($Method -eq "POST" -and $Path -eq "/api/deep-recovery") { return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (Invoke-DeepRecovery)) } }
     return @{ status = 404; type = "application/json"; body = '{"ok":false,"error":"not found"}' }
