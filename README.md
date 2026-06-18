@@ -6,11 +6,12 @@
 
 A Codex Skill for diagnosing and repairing Codex Desktop loopback proxy failures on Windows.
 
-It targets three common failure modes:
+It targets four common failure modes:
 
 1. **Reconnecting / stream disconnected** — elevated sandbox WFP blocks 15721, deadlocks with CC-Switch Live Takeover
 2. **413 Payload Too Large** — conversation context exceeds CC-Switch's 10 MB request body limit
 3. **CC-Switch credential loss** — provider becomes null or reports "No credentials" after crash
+4. **Upstream API server down** — CC-Switch healthy but all requests timeout due to unreachable upstream endpoint
 
 ## 中文说明
 
@@ -21,7 +22,8 @@ It targets three common failure modes:
 1. **Codex 一直 Reconnecting / stream disconnected**：`sandbox = "elevated"` 时，Windows 沙箱防火墙规则会阻断 `127.0.0.1:15721`，而 CC-Switch Live Takeover 又会把 `base_url` 写回 15721，形成死锁。
 2. **413 Payload Too Large**：当前会话上下文过大，请求体超过上游 API 限制，需要归档大 session 或开启新会话。
 3. **CC-Switch 凭据/Provider 丢失**：CC-Switch 崩溃或重启后，可能出现 `current_provider = null` 或 `No credentials`。
-4. **HTTP_PROXY 污染**：用户级 `HTTP_PROXY` / `HTTPS_PROXY` 指向不可用的本地端口时，会导致 CC-Switch 出站请求失败。
+4. **上游 API 服务器宕机**：CC-Switch 状态正常但请求全部超时，上游 endpoint（如 llm4.slashrobot.top）不可达，需要切换供应商或修复数据库。
+5. **HTTP_PROXY 污染**：用户级 `HTTP_PROXY` / `HTTPS_PROXY` 指向不可用的本地端口时，会导致 CC-Switch 出站请求失败。
 
 ### 中文快速安装
 
@@ -64,6 +66,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-repair-web.ps1
 | 删除 HTTP_PROXY | 删除用户级 `HTTP_PROXY`、`HTTPS_PROXY`、`http_proxy`、`https_proxy`，避免 CC-Switch 出站请求被错误代理劫持。 |
 | 重启 CC-Switch | 从已知路径停止并重启 CC-Switch，适合 provider 丢失或凭据恢复失败时使用。 |
 | 测试 CC-Switch API | 向 `http://127.0.0.1:15721/v1/responses` 发送小请求，验证 CC-Switch 是否能正常转发。 |
+| 检查上游连通 | 从 CC-Switch 数据库读取当前供应商的上游 URL，直接测试其连通性。 |
+| CC-Switch 深度恢复 | 停止 CC-Switch、清理 proxy_live_backup、切换到可用供应商、重启 CC-Switch。 |
 | 停止 Codex | 停止正在运行的 Codex 进程，方便后续修复。 |
 | 添加 Loopback 豁免 | 给当前 OpenAI/Codex MSIX 包添加 `CheckNetIsolation LoopbackExempt`。 |
 | 清理 Sandbox 状态 | 删除已知 Codex Sandbox 防火墙规则和 Sandbox 用户，需要管理员权限。 |
@@ -78,11 +82,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-repair-web.ps1
 ```text
 停止 Codex
   ↓
-诊断 sandbox、CC-Switch、Loopback、Portproxy、Session
+诊断 sandbox、CC-Switch、Loopback、Portproxy、上游连通、Session
   ↓
 优先切到 Strategy A：sandbox = "unelevated"，直连 15721
   ↓
 确认 CC-Switch provider 正常；不正常则等待恢复或重启 CC-Switch
+  ↓
+检查上游 API 连通性；不可达则切换供应商或修复数据库
   ↓
 如果是 413，则归档大 session 并开启新会话
   ↓
@@ -109,19 +115,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-repair-web.ps1
 - **`config.toml`** — backs up and patches sandbox mode without breaking CC-Switch integrations
 - **`netsh interface portproxy`** — cleans up legacy 7897→15721 forwarding when switching to Strategy A
 - **CC-Switch crash recovery** — detects provider/credential loss, waits for auto-recovery, or restarts CC-Switch
+- **Upstream API endpoint repair** — detects unreachable upstream servers and migrates to working endpoints via database repair
 - **413 Payload Too Large** — diagnoses oversized context and guides session cleanup
 
 ## Key Insight
 
-Three independent problems can look the same:
+Four independent problems can look the same:
 
 1. **Sandbox deadlock**: elevated sandbox blocks all ports except 7897, CC-Switch forces base_url to 15721 → Codex can't connect → Reconnecting loop
 2. **Context overflow**: CC-Switch is reachable but request body > 10 MB → 413 Payload Too Large
 3. **CC-Switch crash**: CC-Switch lost provider credentials after restart → all requests fail with 400
+4. **Upstream API down**: CC-Switch healthy but upstream endpoint (e.g. llm4.slashrobot.top) is unreachable → all requests timeout
 
 The fix priorities:
 - **First**: set `sandbox = "unelevated"` — eliminates WFP deadlock
-- **Second**: verify CC-Switch `/status` — ensure provider is valid and API forwarding works
+- **Second**: verify CC-Switch `/status` and upstream API connectivity — ensure provider is valid AND upstream is reachable
 - **Third**: if 413 persists, start a new conversation to reset context
 
 ## Two Repair Strategies
@@ -192,6 +200,8 @@ The page opens at `http://127.0.0.1:8765/`. Keep the terminal window open while 
 | Delete HTTP_PROXY | Removes user-level `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, and `https_proxy` variables that can break CC-Switch outbound calls. |
 | Restart CC-Switch | Stops and restarts CC-Switch from a known install path, then waits for its provider recovery. |
 | Test CC-Switch API | Sends a tiny request through `http://127.0.0.1:15721/v1/responses` to verify forwarding. |
+| Check Upstream | Reads the current provider's upstream URL from CC-Switch database and tests direct connectivity. |
+| Deep Recovery | Stops CC-Switch, cleans proxy_live_backup, switches to a working provider, restarts CC-Switch. |
 | Stop Codex | Stops running Codex processes before repair. |
 | Add Loopback Exemption | Adds the current OpenAI/Codex MSIX package to `CheckNetIsolation LoopbackExempt`. |
 | Clean Sandbox State | Removes known Codex sandbox firewall rules and sandbox users. Requires Administrator. |
@@ -222,11 +232,13 @@ Codex shows "413 Payload Too Large" error. Use $ljh-codex-desktop-loopback-repai
 ## Repair Flow
 
 ```
-Stop Codex → Diagnose (sandbox, CC-Switch, loopback, portproxy)
+Stop Codex → Diagnose (sandbox, CC-Switch, loopback, portproxy, upstream)
     ↓
 sandbox=elevated? → Strategy A: unelevated + direct 15721
     ↓
 CC-Switch healthy? → If not: wait 30s for auto-recovery, or restart CC-Switch
+    ↓
+Upstream reachable? → If not: switch provider or patch database endpoint
     ↓
 413 error? → Start new conversation (context too large)
     ↓

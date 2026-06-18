@@ -267,6 +267,8 @@
               <button id="removeProxyBtn" type="button">删除 HTTP_PROXY</button>
               <button id="restartCcBtn" type="button">重启 CC-Switch</button>
               <button id="verifyApiBtn" type="button">测试 CC-Switch API</button>
+              <button id="upstreamCheckBtn" type="button">检查上游连通</button>
+              <button id="deepRecoveryBtn" type="button">CC-Switch 深度恢复</button>
             </div>
           </div>
 
@@ -307,8 +309,9 @@
     const $ = (id) => document.getElementById(id);
     const actionIds = [
       'refreshBtn', 'diagnoseBtn', 'repairBtn', 'strategyABtn', 'guardBtn', 'clearBtn',
-      'removeProxyBtn', 'restartCcBtn', 'verifyApiBtn', 'stopBtn', 'loopbackBtn',
-      'cleanSandboxBtn', 'cleanPortproxyBtn', 'startCcBtn', 'launcherBtn', 'strategyBBtn'
+      'removeProxyBtn', 'restartCcBtn', 'verifyApiBtn', 'upstreamCheckBtn', 'deepRecoveryBtn',
+      'stopBtn', 'loopbackBtn', 'cleanSandboxBtn', 'cleanPortproxyBtn', 'startCcBtn',
+      'launcherBtn', 'strategyBBtn'
     ];
     const buttons = actionIds.map($).filter(Boolean);
 
@@ -391,6 +394,8 @@
     $('removeProxyBtn').addEventListener('click', () => runAction('/api/remove-proxy', '删除用户级 HTTP_PROXY/HTTPS_PROXY...', '代理变量处理完成。'));
     $('restartCcBtn').addEventListener('click', () => runAction('/api/restart-ccswitch', '重启 CC-Switch...', 'CC-Switch 已请求重启，等待 30 秒后再刷新状态。'));
     $('verifyApiBtn').addEventListener('click', () => runAction('/api/verify-api', '测试 CC-Switch /v1/responses...', 'API 测试完成。'));
+    $('upstreamCheckBtn').addEventListener('click', () => runAction('/api/upstream-check', '检查上游 API 连通性...', '上游连通性检查完成。'));
+    $('deepRecoveryBtn').addEventListener('click', () => runAction('/api/deep-recovery', '执行 CC-Switch 深度恢复（清理备份 + 切换供应商 + 重启）...', '深度恢复完成，请刷新状态确认。'));
     $('stopBtn').addEventListener('click', () => runAction('/api/stop-codex', '停止 Codex...', 'Codex 停止动作完成。'));
     $('loopbackBtn').addEventListener('click', () => runAction('/api/add-loopback', '添加 Loopback 豁免...', 'Loopback 豁免处理完成。'));
     $('cleanSandboxBtn').addEventListener('click', () => runAction('/api/clean-sandbox', '清理 Sandbox 状态...', 'Sandbox 状态清理完成。'));

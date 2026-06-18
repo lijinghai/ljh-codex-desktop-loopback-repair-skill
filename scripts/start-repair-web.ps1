@@ -428,6 +428,134 @@ function Verify-CcSwitchApi {
     }
 }
 
+function Test-UpstreamConnectivity {
+    $log = [System.Collections.Generic.List[string]]::new()
+    try {
+        $db = "$env:USERPROFILE\.cc-switch\cc-switch.db"
+        if (-not (Test-Path $db)) { return (New-ActionResult $log $false "CC-Switch database not found at $db") }
+
+        # Get current provider's upstream URL from settings_config
+        $configs = & sqlite3 $db "SELECT id, name, settings_config FROM providers WHERE app_type='codex' AND is_current=1;"
+        if (-not $configs) { return (New-ActionResult $log $false "No active codex provider found") }
+
+        # Parse base_url from settings_config JSON
+        $providerId = ($configs -split '\|')[0]
+        $providerName = ($configs -split '\|')[1]
+        $settingsJson = ($configs -split '\|', 3)[2]
+
+        $upstreamUrl = $null
+        if ($settingsJson -match 'base_url\s*=\s*"([^"]+)"') {
+            $upstreamUrl = $Matches[1]
+        }
+        if (-not $upstreamUrl) {
+            Add-Log $log "Could not parse base_url from provider config."
+            return (New-ActionResult $log $false "Cannot parse upstream URL")
+        }
+
+        Add-Log $log "Provider: $providerName ($providerId)"
+        Add-Log $log "Upstream URL: $upstreamUrl"
+
+        # Test connectivity to upstream
+        $testUrl = "$upstreamUrl/responses"
+        Add-Log $log "Testing connectivity to $testUrl ..."
+        try {
+            $response = Invoke-WebRequest -Uri $testUrl -Method Post -ContentType "application/json" -Body '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":5}' -TimeoutSec 10 -SkipHttpErrorCheck
+            $statusCode = $response.StatusCode
+            if ($statusCode -eq 200) {
+                Add-Log $log "Upstream reachable! HTTP $statusCode. API is healthy."
+                return (New-ActionResult $log)
+            } elseif ($statusCode -eq 401) {
+                Add-Log $log "Upstream reachable but returned HTTP 401. URL is correct but API key may be invalid."
+                return (New-ActionResult $log $false "HTTP 401 — check API key")
+            } else {
+                Add-Log $log "Upstream reachable but returned HTTP $statusCode."
+                return (New-ActionResult $log $false "HTTP $statusCode")
+            }
+        } catch {
+            $errMsg = $_.Exception.Message
+            if ($errMsg -match 'timeout|timed out|操作超时') {
+                Add-Log $log "Upstream TIMEOUT! $upstreamUrl is unreachable. Server may be down."
+            } else {
+                Add-Log $log "Upstream connection failed: $errMsg"
+            }
+            return (New-ActionResult $log $false "Upstream unreachable")
+        }
+    } catch {
+        Add-Log $log "ERROR: $($_.Exception.Message)"
+        return (New-ActionResult $log $false $_.Exception.Message)
+    }
+}
+
+function Invoke-DeepRecovery {
+    $log = [System.Collections.Generic.List[string]]::new()
+    try {
+        Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+        Add-Log $log "Stopped CC-Switch."
+        Start-Sleep 2
+
+        $db = "$env:USERPROFILE\.cc-switch\cc-switch.db"
+        if (-not (Test-Path $db)) { return (New-ActionResult $log $false "CC-Switch database not found at $db") }
+
+        # Check available providers
+        $providers = & sqlite3 $db "SELECT id, app_type, name, is_current FROM providers WHERE app_type='codex';"
+        Add-Log $log "Available codex providers: $($providers -join ' | ')"
+
+        # Show current backup state
+        $backupInfo = & sqlite3 $db "SELECT length(original_config) FROM proxy_live_backup WHERE app_type='codex';"
+        if ($backupInfo) {
+            Add-Log $log "proxy_live_backup exists ($backupInfo bytes). Will clean on restart."
+        } else {
+            Add-Log $log "No proxy_live_backup found for codex."
+        }
+
+        # If the default provider has working config, switch to it
+        $defaultCfg = & sqlite3 $db "SELECT settings_config FROM providers WHERE id='default' AND app_type='codex';"
+        if ($defaultCfg -and $defaultCfg -match 'base_url\s*=\s*"([^"]+)"') {
+            $defaultUrl = $Matches[1]
+            Add-Log $log "Default provider endpoint: $defaultUrl"
+
+            # Test if default provider's upstream is reachable
+            try {
+                $test = Invoke-WebRequest -Uri "$defaultUrl/responses" -Method Post -ContentType "application/json" -Body '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":5}' -TimeoutSec 8 -SkipHttpErrorCheck
+                Add-Log $log "Default provider upstream is reachable (HTTP $($test.StatusCode))."
+            } catch {
+                Add-Log $log "Warning: Default provider upstream may be unreachable: $($_.Exception.Message)"
+            }
+
+            # Switch to default provider
+            & sqlite3 $db "UPDATE providers SET is_current = 0 WHERE app_type = 'codex'; UPDATE providers SET is_current = 1 WHERE id = 'default' AND app_type = 'codex';"
+            Add-Log $log "Switched active codex provider to 'default'."
+        }
+
+        # Clean proxy_live_backup to prevent stale config restoration
+        & sqlite3 $db "DELETE FROM proxy_live_backup WHERE app_type = 'codex';"
+        Add-Log $log "Cleared proxy_live_backup for codex (CC-Switch will recreate on next Takeover)."
+
+        # Restart CC-Switch
+        $ccPath = Find-CcSwitchPath
+        if ($ccPath) {
+            Start-Process $ccPath -WindowStyle Hidden
+            Start-Sleep 4
+            Add-Log $log "Restarted CC-Switch from $ccPath."
+
+            # Check status
+            try {
+                $status = Invoke-RestMethod -Uri "http://127.0.0.1:15721/status" -TimeoutSec 5
+                Add-Log $log "CC-Switch status: running=$($status.running), provider=$($status.current_provider), last_error=$($status.last_error)"
+            } catch {
+                Add-Log $log "CC-Switch status check failed: $($_.Exception.Message)"
+            }
+        } else {
+            Add-Log $log "ERROR: CC-Switch executable not found. Start it manually."
+        }
+
+        return (New-ActionResult $log)
+    } catch {
+        Add-Log $log "ERROR: $($_.Exception.Message)"
+        return (New-ActionResult $log $false $_.Exception.Message)
+    }
+}
+
 function Send-Response {
     param($Client, [int]$StatusCode, [string]$ContentType, [string]$Body)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Body)
@@ -469,6 +597,8 @@ function Invoke-Route {
     if ($Method -eq "POST" -and $Path -eq "/api/add-loopback") { $log = [System.Collections.Generic.List[string]]::new(); Add-LoopbackExemption $log; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
     if ($Method -eq "POST" -and $Path -eq "/api/clean-sandbox") { $log = [System.Collections.Generic.List[string]]::new(); Clean-SandboxState $log | Out-Null; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
     if ($Method -eq "POST" -and $Path -eq "/api/clean-portproxy") { $log = [System.Collections.Generic.List[string]]::new(); Remove-LegacyPortproxy $log | Out-Null; return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (New-ActionResult $log)) } }
+    if ($Method -eq "POST" -and $Path -eq "/api/upstream-check") { return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (Test-UpstreamConnectivity)) } }
+    if ($Method -eq "POST" -and $Path -eq "/api/deep-recovery") { return @{ status = 200; type = "application/json"; body = (ConvertTo-ResultJson (Invoke-DeepRecovery)) } }
     return @{ status = 404; type = "application/json"; body = '{"ok":false,"error":"not found"}' }
 }
 

@@ -24,6 +24,8 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **HTTP_PROXY kills CC-Switch outbound** — If `HTTP_PROXY` or `HTTPS_PROXY` environment variable is set to `http://127.0.0.1:XXXX`, CC-Switch routes ALL outbound API requests through that proxy. If nothing is listening there, CC-Switch fails with `"连接失败"`. Curl and browsers are unaffected (they don't auto-use these vars), making this very hard to diagnose. Fix: delete the env var.
 
+**Upstream API server can be down** — CC-Switch can be perfectly healthy (running, valid provider, no credential errors) but ALL requests fail because the upstream API server (e.g. `llm4.slashrobot.top`) is unreachable. The `/status` endpoint shows 0% success rate with `"所有供应商都失败"` or `"请求超时"`. CC-Switch's `proxy_live_backup` table stores a snapshot of the last working config — on restart, CC-Switch restores auth tokens from this backup, overwriting manual database edits. Fix: switch to a working provider endpoint, or update both the provider's `settings_config` AND the `proxy_live_backup` in CC-Switch's SQLite database.
+
 ## Quick Auto-Fix Flow
 
 When invoked, follow this priority order. Stop at the first step that resolves the issue:
@@ -72,6 +74,8 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | Portproxy `7897→15721` missing | Codex can't reach CC-Switch | Add portproxy (Step 3e) |
 | Portproxy `7897→15721` exists | Essential routing in place | Keep it |
 | CC-Switch reports `"连接失败"` but curl can reach upstream | `HTTP_PROXY` env var poisoning outbound | Go to Step 4d (Remove HTTP_PROXY) |
+| CC-Switch `/status` valid provider but API test times out | Upstream API endpoint unreachable (server down) | Go to Step 4e (Upstream Endpoint Repair) |
+| CC-Switch `/status` shows high fail rate, `"所有供应商都失败"` | Upstream endpoint dead or credentials invalid for that endpoint | Go to Step 4e (Upstream Endpoint Repair) |
 
 ### Step 3: Strategy A — Unelevated Sandbox (Primary Fix)
 
@@ -224,6 +228,65 @@ $path = (Get-Process cc-switch -ErrorAction SilentlyContinue | Select-Object -Fi
 if (-not $path) { $path = @("F:\CC\cc-switch.exe", "$env:LOCALAPPDATA\com.ccswitch.desktop\cc-switch.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
 if ($path) { Start-Process $path -WindowStyle Hidden }
 ```
+
+#### 4e. Upstream Endpoint Repair (Provider reachable but upstream API dead)
+
+CC-Switch can be healthy (running, valid provider, no credential errors) but ALL requests fail because the upstream API server is unreachable. The `/status` endpoint may show 0% success rate with `"所有供应商都失败"` or `"请求超时"`.
+
+**Diagnose upstream connectivity:**
+
+```powershell
+# 1. Check CC-Switch logs for the upstream URL being used
+Get-Content "$env:USERPROFILE\.cc-switch\logs\cc-switch.log" -Tail 5 | Select-String '>>> 请求 URL'
+
+# 2. Test the upstream URL directly
+curl.exe -v --max-time 10 "https://<UPSTREAM_HOST>/v1/responses" -H "Content-Type: application/json" -d '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}'
+```
+
+**If the upstream URL is unreachable** (connection timeout, no route to host):
+
+The CC-Switch database stores each provider's upstream endpoint. There are two fix strategies:
+
+**Option 1 — Switch to another working provider** (preferred):
+1. Open CC-Switch GUI
+2. Switch to a provider with a working endpoint (e.g., switch from `llm4` to `llm2` endpoint)
+3. Or select a different provider entirely and verify it works
+
+**Option 2 — Repair the database directly** (when GUI switching not available):
+```powershell
+# Stop CC-Switch first
+Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep 2
+
+# Find CC-Switch database
+$db = "$env:USERPROFILE\.cc-switch\cc-switch.db"
+
+# Check current provider config and upstream URL
+sqlite3 $db "SELECT id, name, settings_config FROM providers WHERE app_type='codex' AND is_current=1;"
+
+# List all available provider endpoints
+sqlite3 $db "SELECT * FROM provider_endpoints;"
+
+# If a working endpoint exists for another provider, switch is_current:
+sqlite3 $db "UPDATE providers SET is_current = 1 WHERE id = 'default' AND app_type = 'codex';"
+sqlite3 $db "UPDATE providers SET is_current = 0 WHERE id = '<DEAD_PROVIDER_ID>' AND app_type = 'codex';"
+
+# ALSO update proxy_live_backup — CC-Switch restores from this on restart
+# Check current backup:
+sqlite3 $db "SELECT substr(original_config, 1, 200) FROM proxy_live_backup WHERE app_type='codex';"
+
+# Update the backup's endpoint URL and API key to a working combination:
+sqlite3 $db "UPDATE proxy_live_backup SET original_config = replace(replace(original_config, '<DEAD_HOST>', '<WORKING_HOST>'), '<OLD_API_KEY>', '<WORKING_API_KEY>') WHERE app_type = 'codex';"
+
+# Start CC-Switch
+Start-Process "F:\CC\cc-switch.exe" -WindowStyle Hidden
+Start-Sleep 5
+curl.exe -s http://127.0.0.1:15721/status
+```
+
+**Key insight**: CC-Switch's `proxy_live_backup` table stores a snapshot of the last working config. On restart, CC-Switch restores auth tokens from this backup, overwriting any manual database edits. Both the provider's `settings_config` AND the `proxy_live_backup` must be updated together.
+
+**Prevention**: If an upstream API server is known to be unstable, configure multiple provider endpoints in CC-Switch (via its GUI) so failover can happen automatically.
 
 ### Step 5: Start Codex In Order
 
@@ -417,7 +480,10 @@ netsh interface portproxy show all
 | `error sending request for url (http://127.0.0.1:7897/...)` | Portproxy deleted or IP Helper stopped | Re-run Step 3e; check `services.msc` → IP Helper |
 | Codex uses `codex/cx/gpt-5.5` as model name | CC-Switch rewrote model field | Normal — CC-Switch prefixes provider-scoped model names |
 | All requests fail with 400 "No credentials" | CC-Switch lost API keys | CC-Switch Recovery (Step 4a); if persistent, re-enter keys in CC-Switch GUI |
-| CC-Switch restarted but `/status` still shows errors | CC-Switch needs more time for auto-recovery | Wait 30-60s, re-check; CC-Switch recovers Live config from backup |
+| CC-Switch restarted but `/status` still shows errors | CC-Switch needs more time for auto-recovery, or `proxy_live_backup` has stale config | Wait 30-60s; if persistent, check upstream endpoint health (Step 4e) |
+| CC-Switch provider valid but API requests time out | Upstream API server unreachable (server down, DNS failure) | Run Step 4e — check logs, test direct connectivity, switch endpoint or patch database |
+| CC-Switch shows `"所有供应商都失败"` with 0% success | Upstream endpoint unreachable or credentials invalid | Run Step 4e — update endpoint URL and API key in database + backup |
+| Requests fail after updating provider config in DB | `proxy_live_backup` overwrote manual changes on restart | Must update BOTH provider settings_config AND proxy_live_backup (Step 4e) |
 
 ## CC-Switch Deep Recovery
 

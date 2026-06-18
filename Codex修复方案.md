@@ -2,12 +2,13 @@
 
 # Codex Desktop 修复方案
 
-> **问题全景**：Codex Desktop 可能出现三种故障：
+> **问题全景**：Codex Desktop 可能出现四种故障：
 > 1. `Reconnecting` / `stream disconnected` — 沙箱 WFP 阻断 15721，配置死锁
 > 2. `413 Payload Too Large` — 会话上下文超过 CC-Switch 10 MB 请求体限制
 > 3. CC-Switch 凭证丢失 — 崩溃后 provider 变 null 或报 "No credentials"
+> 4. 上游 API 服务器宕机 — provider 有效但请求全部超时/失败
 >
-> **修复优先级**：先修沙箱（策略 A），再查 CC-Switch 健康，最后处理 413。
+> **修复优先级**：先修沙箱（策略 A），再查 CC-Switch 健康（含上游连通性），最后处理 413。
 
 ---
 
@@ -109,6 +110,7 @@ if ($path) {
 
 4. 重启后等 10 秒，再次检查 `/status`。
 5. 如果 60 秒后仍未恢复，打开 CC-Switch GUI 手动重新配置 provider 和 API 密钥。
+6. **如果手动修改了数据库但重启后又被覆盖**：`proxy_live_backup` 表会在 CC-Switch 启动时恢复旧的认证 token。必须同时更新 `providers` 表和 `proxy_live_backup` 表（详见 "CC-Switch 上游 API 端点修复"）。
 
 ### 情况 2：CC-Switch 未运行
 
@@ -173,6 +175,91 @@ Get-ChildItem "$env:USERPROFILE\.codex\sessions\$today" -ErrorAction SilentlyCon
 如果一次对话中有大量工具调用或读取了大文件，上下文会快速增长超过 10 MB。长时间任务建议定期开新会话。
 
 **注意**：413 不是沙箱/网络问题。如果 CC-Switch `/status` 正常且测试请求可以通过，但 Codex 报 413，那就是上下文太大，需要归档会话文件——不要改 sandbox 或网络设置。
+
+---
+
+## CC-Switch 上游 API 端点修复
+
+CC-Switch 本身健康（运行中、provider 有效、无凭证错误），但所有请求都失败——上游 API 服务器不可达。
+
+### 症状
+
+- CC-Switch `/status` 返回 `"running":true`，`current_provider` 有值
+- `success_rate` 为 0.0%，`failed_requests` 持续增长
+- `last_error` 显示 `"所有供应商都失败"` 或 `"请求超时"`
+- API 测试请求卡住 20 秒后超时
+
+### 诊断
+
+```powershell
+# 1. 查看 CC-Switch 日志，找到上游 URL
+Get-Content "$env:USERPROFILE\.cc-switch\logs\cc-switch.log" -Tail 5 | Select-String '>>> 请求 URL'
+
+# 2. 直接测试上游 URL 连通性
+curl.exe -v --max-time 10 "https://<UPSTREAM_HOST>/v1/responses" -H "Content-Type: application/json" -H "Authorization: Bearer <API_KEY>" -d '{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"max_output_tokens":10}'
+```
+
+如果直接 curl 上游也超时或不返回，说明上游 API 服务器宕机或网络不通。
+
+### 修复
+
+**方案 1：CC-Switch GUI 切换供应商**（推荐）
+1. 打开 CC-Switch GUI
+2. 切换到有可用端点的供应商
+3. 用 `/status` 确认 provider 已切换
+
+**方案 2：直接修复数据库**（GUI 不可用时）
+
+```powershell
+# 必须先停止 CC-Switch
+Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep 2
+
+$db = "$env:USERPROFILE\.cc-switch\cc-switch.db"
+
+# 查看所有供应商和端点
+sqlite3 $db "SELECT id, app_type, name, is_current FROM providers;"
+sqlite3 $db "SELECT * FROM provider_endpoints;"
+
+# 方案 2a：切换到已有的可用供应商
+sqlite3 $db "UPDATE providers SET is_current = 1 WHERE id = 'default' AND app_type = 'codex';"
+sqlite3 $db "UPDATE providers SET is_current = 0 WHERE id = '<DEAD_PROVIDER_ID>' AND app_type = 'codex';"
+
+# 方案 2b：修复当前供应商的上游 URL
+# 修改 provider 的 settings_config（改 base_url 和 API key）
+sqlite3 $db "UPDATE providers SET settings_config = replace(replace(settings_config, '<DEAD_HOST>', '<WORKING_HOST>'), '<OLD_KEY>', '<WORKING_KEY>') WHERE id = '<PROVIDER_ID>' AND app_type = 'codex';"
+
+# ⚠️ 关键：必须同时更新 proxy_live_backup！
+# CC-Switch 重启后会从这个备份恢复配置，覆盖你在 provider 表中的手动修改
+sqlite3 $db "UPDATE proxy_live_backup SET original_config = replace(replace(original_config, '<DEAD_HOST>', '<WORKING_HOST>'), '<OLD_KEY>', '<WORKING_KEY>') WHERE app_type = 'codex';"
+
+# 验证修改
+sqlite3 $db "SELECT substr(original_config, 1, 300) FROM proxy_live_backup WHERE app_type = 'codex';"
+
+# 重启 CC-Switch
+Start-Process "F:\CC\cc-switch.exe" -WindowStyle Hidden
+Start-Sleep 5
+curl.exe -s http://127.0.0.1:15721/status
+```
+
+### proxy_live_backup 机制说明
+
+CC-Switch 在数据库中维护一张 `proxy_live_backup` 表，存储 Codex config.toml 的快照：
+
+- **备份时机**：CC-Switch Live Takeover 接管 Codex 配置时，会把当前 `config.toml` 完整备份到 `proxy_live_backup`
+- **恢复时机**：CC-Switch 每次启动时，从 `proxy_live_backup` 恢复认证 token（`OPENAI_API_KEY`）到当前活跃供应商的 `settings_config`
+- **副作用**：如果你手动修改了数据库中的 `settings_config`（改了 API key 或 base_url），CC-Switch 重启后会从 `proxy_live_backup` 恢复旧的 token，覆盖你的修改
+- **正确做法**：同时更新 `providers.settings_config` 和 `proxy_live_backup.original_config`
+
+### 验证
+
+```powershell
+# 测试修复后的连通性
+$body = @{ model = "gpt-5.5"; input = @(@{ role = "user"; content = "hi" }); max_output_tokens = 10 } | ConvertTo-Json -Depth 5 -Compress
+Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 20 | ConvertTo-Json -Depth 5 -Compress
+```
+
+预期返回流式模型输出（如 `Hi! How can I help?`），而不是超时或 proxy_error。
 
 ---
 
@@ -277,6 +364,9 @@ netsh interface portproxy show all
 | 端口转发重启后消失 | IP Helper 服务问题 | 重新执行 B3，检查 IP Helper 服务 |
 | 之前能用突然重连 | CC-Switch 崩溃丢失 provider | 检查 `/status`，执行 CC-Switch 恢复 |
 | Codex 模型名变成 `codex/cx/gpt-5.5` | CC-Switch 重写了 model 字段 | 正常，CC-Switch 加了 provider 前缀 |
+| CC-Switch provider 有效但请求全超时 | 上游 API 服务器宕机 | 切换 supplier 或修复数据库（见 CC-Switch 上游 API 端点修复） |
+| CC-Switch 显示 "所有供应商都失败" | 上游 endpoint 不可达或凭证无效 | 更新 endpoint URL 和 API key，同时更新 backup |
+| 手动改了 DB 但重启后又被覆盖 | `proxy_live_backup` 覆盖了手动修改 | 必须同时更新 provider 表和 proxy_live_backup 表 |
 
 ---
 
