@@ -23,4 +23,5 @@ venv/
 
 # Local Codex/runtime files
 .codex/
+.claude/
 
