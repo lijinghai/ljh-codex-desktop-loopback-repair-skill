@@ -30,6 +30,8 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **Codex Provider missing upstream base_url** - CC-Switch can keep Codex Live Takeover pointing at the local proxy (`http://127.0.0.1:15721/v1`) while the current Codex provider row in `%USERPROFILE%\.cc-switch\cc-switch.db` loses its upstream `base_url` inside `providers.settings_config.config`. The visible error is usually `Codex Provider ... 缺少 base_url 配置` or `Codex Provider missing base_url`. Fix: stop Codex and CC-Switch, back up the database, restore a full provider config from `proxy_live_backup`, `settings.common_config_codex`, or `provider_endpoints`, preserve `auth`, set `commonConfigEnabled=false`, update BOTH `providers.settings_config` and `proxy_live_backup.original_config`, reset provider health, then restart CC-Switch and verify `/v1/responses`.
 
+**Codex auth.json stale API key (macOS/CLI)** - Codex can report `unexpected status 401 Unauthorized: {"error":"API key required for remote API access"}, url: https://.../v1/responses` even when `~/.codex/config.toml` points at `http://127.0.0.1:15721/v1` and CC-Switch curl tests pass. In this case, compare direct upstream requests using `~/.codex/auth.json` versus the current CC-Switch Codex provider key. If the CC-Switch provider key returns HTTP 200 but `auth.json` returns 401, back up `~/.codex/auth.json`, sync it from `providers.settings_config.auth.OPENAI_API_KEY`, restart Codex, and verify with `codex exec`.
+
 **Deep Recovery note** — After `DELETE FROM proxy_live_backup`, CC-Switch will show `current_provider: null` until Codex is started. CC-Switch needs Codex to launch to trigger Live Takeover, which recreates the backup and initializes the provider. Start order: 1) CC-Switch first, 2) then Codex.
 
 ## Quick Auto-Fix Flow
@@ -85,6 +87,7 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | CC-Switch API test returns `upstream_status: HTTP 404` with `No active credentials for provider: openai` | Third-party proxy (e.g. `llm.slashrobot.top`) upstream credentials expired — server-side, NOT fixable locally | Contact proxy admin or switch provider in CC-Switch GUI |
 | CC-Switch `/status` shows `current_provider: null` after deep recovery | Normal — `proxy_live_backup` was cleaned, needs Codex launch to trigger Live Takeover | Start Codex; CC-Switch will auto-recover provider within seconds |
 | Error contains `缺少 base_url 配置` or `missing base_url` | Current CC-Switch Codex provider lost upstream `base_url` in SQLite | Go to Step 4f (Provider base_url Repair) |
+| Error contains `API key required for remote API access` and URL is the upstream `https://.../v1/responses` | `~/.codex/auth.json` may contain a stale key while CC-Switch DB has a working provider key | Go to Step 4g (Sync Codex auth.json from CC-Switch) |
 
 ### Step 3: Strategy A — Unelevated Sandbox (Primary Fix)
 
@@ -331,6 +334,46 @@ Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -Conte
 ```
 
 Expected: HTTP 200 model response, `/status` success rate improving, and no `Codex Provider ... missing base_url` proxy error.
+
+#### 4g. Sync Codex auth.json from CC-Switch (macOS/CLI 401)
+
+Use this when Codex reports:
+
+```text
+unexpected status 401 Unauthorized: {"error":"API key required for remote API access"}, url: https://llm.slashrobot.top/v1/responses
+```
+
+First confirm the split-brain condition:
+- `~/.codex/config.toml` still points at `http://127.0.0.1:15721/v1`
+- `curl http://127.0.0.1:15721/v1/responses` succeeds through CC-Switch
+- A direct upstream test with the key in `~/.codex/auth.json` returns 401
+- The same direct upstream test with `providers.settings_config.auth.OPENAI_API_KEY` from CC-Switch DB returns HTTP 200
+
+Then run the helper from the skill directory:
+
+```bash
+python3 scripts/sync_codex_auth_from_ccswitch.py --verify
+```
+
+On Windows PowerShell, pass explicit paths if needed:
+
+```powershell
+python .\scripts\sync_codex_auth_from_ccswitch.py --db "$env:USERPROFILE\.cc-switch\cc-switch.db" --codex-home "$env:USERPROFILE\.codex" --verify
+```
+
+What the helper does:
+- Reads the current Codex provider from `cc-switch.db`
+- Copies `providers.settings_config.auth.OPENAI_API_KEY` into `~/.codex/auth.json`
+- Backs up the old auth file to `auth.json.bak-sync-ccswitch-YYYYMMDD-HHMMSS`
+- Optionally verifies the upstream `/responses` endpoint without printing the key
+
+After syncing, restart Codex Desktop and verify with the bundled CLI:
+
+```bash
+/Applications/Codex.app/Contents/Resources/codex exec --skip-git-repo-check --ephemeral -C /tmp -m cx/gpt-5.5 "Reply with exactly OK."
+```
+
+Expected: Codex returns `OK`, not repeated 401 reconnect errors.
 
 ### Step 5: Start Codex In Order
 
