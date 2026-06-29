@@ -266,27 +266,35 @@ def update_proxy_backup(conn: sqlite3.Connection, new_config: str, auth, changes
         backup_obj["auth"] = auth
     backup_obj["config"] = new_config
     original_config = json.dumps(backup_obj, ensure_ascii=False)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def backup_time_columns() -> list[str]:
+        return [col for col in ["backed_up_at", "created_at", "updated_at"] if col in cols]
+
+    def update_existing(where_sql: str = "", where_values: tuple = ()) -> None:
+        set_cols = ["original_config"] + backup_time_columns()
+        set_sql = ", ".join(f"{qident(col)}=?" for col in set_cols)
+        values = [original_config] + [now] * (len(set_cols) - 1) + list(where_values)
+        conn.execute(f"UPDATE proxy_live_backup SET {set_sql}{where_sql}", values)
 
     if "app_type" in cols:
         existing = conn.execute("SELECT 1 FROM proxy_live_backup WHERE app_type=? LIMIT 1", ("codex",)).fetchone()
         if existing:
-            conn.execute("UPDATE proxy_live_backup SET original_config=? WHERE app_type=?", (original_config, "codex"))
+            update_existing(" WHERE app_type=?", ("codex",))
             changes.append("proxy_live_backup.original_config updated")
             return
 
     if "app_type" in cols:
         insert_cols = ["app_type", "original_config"]
         values = ["codex", original_config]
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
-        for time_col in ["created_at", "updated_at"]:
-            if time_col in cols:
-                insert_cols.append(time_col)
-                values.append(now)
+        for time_col in backup_time_columns():
+            insert_cols.append(time_col)
+            values.append(now)
         sql = "INSERT INTO proxy_live_backup (" + ", ".join(qident(c) for c in insert_cols) + ") VALUES (" + ", ".join("?" for _ in insert_cols) + ")"
         conn.execute(sql, values)
         changes.append("proxy_live_backup.original_config inserted")
     else:
-        conn.execute("UPDATE proxy_live_backup SET original_config=?", (original_config,))
+        update_existing()
         changes.append("proxy_live_backup.original_config updated")
 
 
