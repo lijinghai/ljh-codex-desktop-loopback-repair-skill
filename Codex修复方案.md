@@ -367,6 +367,54 @@ netsh interface portproxy show all
 | CC-Switch provider 有效但请求全超时 | 上游 API 服务器宕机 | 切换 supplier 或修复数据库（见 CC-Switch 上游 API 端点修复） |
 | CC-Switch 显示 "所有供应商都失败" | 上游 endpoint 不可达或凭证无效 | 更新 endpoint URL 和 API key，同时更新 backup |
 | 手动改了 DB 但重启后又被覆盖 | `proxy_live_backup` 覆盖了手动修改 | 必须同时更新 provider 表和 proxy_live_backup 表 |
+| CC-Switch API 返回 `upstream_status: HTTP 404` + `No active credentials for provider: openai` | 第三方代理（如 `llm.slashrobot.top`）的上游凭证过期 — 服务端问题，本地无法修复 | 联系代理服务管理员，或在 CC-Switch GUI 切换供应商 |
+
+---
+
+## 紧凑修复流程（最常见场景）
+
+Codex 出现 "Reconnecting" / "stream disconnected"，99% 是 CC-Switch 重启后把 `sandbox` 改回了 `elevated` 导致死锁。
+
+**管理员 PowerShell** 三步修复：
+
+```powershell
+# 1. 停止 Codex
+Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force
+
+# 2. 备份并修改 sandbox → unelevated
+$config = "$env:USERPROFILE\.codex\config.toml"
+Copy-Item $config "$config.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
+$text = Get-Content $config -Raw -Encoding UTF8
+$text = $text -replace 'sandbox\s*=\s*"[^\"]+"', 'sandbox = "unelevated"'
+[IO.File]::WriteAllText($config, $text, [Text.UTF8Encoding]::new($false))
+
+# 3. Loopback 豁免 + Portproxy
+$pkg = (Get-AppxPackage -Name '*OpenAI*').PackageFullName
+if ($pkg) { CheckNetIsolation LoopbackExempt -a -n="$pkg" }
+netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1
+netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 connectport=15721 connectaddress=127.0.0.1
+```
+
+安装 Sandbox 守护（防复发）：
+
+```powershell
+Copy-Item "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts\sandbox-guard.ps1" "$env:USERPROFILE\.codex\sandbox-guard.ps1" -Force
+Copy-Item "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts\sandbox-guard.vbs" "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\sandbox-guard.vbs" -Force
+Start-Process powershell.exe -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File', "$env:USERPROFILE\.codex\sandbox-guard.ps1" -WindowStyle Hidden
+```
+
+### 如果 CC-Switch API 测试返回上游凭证过期
+
+```
+upstream_status: HTTP 404
+cause: No active credentials for provider: openai
+```
+
+这是第三方代理（如 `llm.slashrobot.top`）服务端问题，**本地无法修复**。需要联系代理管理员或切换供应商。
+
+### 如果深度恢复后 CC-Switch 显示 provider=null
+
+正常现象 — 启动 Codex Desktop，CC-Switch Live Takeover 会在几秒内自动初始化 provider。
 
 ---
 

@@ -26,6 +26,10 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **Upstream API server can be down** — CC-Switch can be perfectly healthy (running, valid provider, no credential errors) but ALL requests fail because the upstream API server (e.g. `llm4.slashrobot.top`) is unreachable. The `/status` endpoint shows 0% success rate with `"所有供应商都失败"` or `"请求超时"`. CC-Switch's `proxy_live_backup` table stores a snapshot of the last working config — on restart, CC-Switch restores auth tokens from this backup, overwriting manual database edits. Fix: switch to a working provider endpoint, or update both the provider's `settings_config` AND the `proxy_live_backup` in CC-Switch's SQLite database.
 
+**Upstream credential expired (third-party proxy)** — CC-Switch is running and routing correctly, but the upstream API proxy service (e.g. `llm.slashrobot.top`) returns `HTTP 404: No active credentials for provider: openai`. This means the third-party proxy's own upstream credentials (OpenAI/Anthropic) have expired — the user's API key is valid on the proxy, but the proxy cannot forward requests. This is a **server-side issue, NOT fixable locally**. The API test through CC-Switch will return `upstream_status: HTTP 404` and `cause: No active credentials for provider: openai`. Fix: contact the proxy service admin to renew their upstream credentials, or switch to a different provider in CC-Switch GUI (e.g. configure a direct DeepSeek or other API key).
+
+**Deep Recovery note** — After `DELETE FROM proxy_live_backup`, CC-Switch will show `current_provider: null` until Codex is started. CC-Switch needs Codex to launch to trigger Live Takeover, which recreates the backup and initializes the provider. Start order: 1) CC-Switch first, 2) then Codex.
+
 ## Quick Auto-Fix Flow
 
 When invoked, follow this priority order. Stop at the first step that resolves the issue:
@@ -76,6 +80,8 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | CC-Switch reports `"连接失败"` but curl can reach upstream | `HTTP_PROXY` env var poisoning outbound | Go to Step 4d (Remove HTTP_PROXY) |
 | CC-Switch `/status` valid provider but API test times out | Upstream API endpoint unreachable (server down) | Go to Step 4e (Upstream Endpoint Repair) |
 | CC-Switch `/status` shows high fail rate, `"所有供应商都失败"` | Upstream endpoint dead or credentials invalid for that endpoint | Go to Step 4e (Upstream Endpoint Repair) |
+| CC-Switch API test returns `upstream_status: HTTP 404` with `No active credentials for provider: openai` | Third-party proxy (e.g. `llm.slashrobot.top`) upstream credentials expired — server-side, NOT fixable locally | Contact proxy admin or switch provider in CC-Switch GUI |
+| CC-Switch `/status` shows `current_provider: null` after deep recovery | Normal — `proxy_live_backup` was cleaned, needs Codex launch to trigger Live Takeover | Start Codex; CC-Switch will auto-recover provider within seconds |
 
 ### Step 3: Strategy A — Unelevated Sandbox (Primary Fix)
 
@@ -539,3 +545,67 @@ If CC-Switch repeatedly shows `"current_provider":null` after restarts:
 - Some repair commands require Administrator PowerShell
 - Codex Store updates change `PackageFullName` — re-run loopback exemption after updates
 - Every Codex launch recreates sandbox users and firewall rules — `unelevated` mode ensures they don't block the main process
+
+## Quick Compact Repair (Most Common Case)
+
+When Codex shows "Reconnecting" / "stream disconnected" on Windows with CC-Switch, the root cause is almost always: **CC-Switch restarted → wrote `sandbox = "elevated"` → WFP blocks port 15721 → deadlock**.
+
+Run these three steps as Administrator PowerShell:
+
+```powershell
+# Step 1: Stop Codex
+Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force
+
+# Step 2: Fix sandbox to unelevated (backup first)
+$config = "$env:USERPROFILE\.codex\config.toml"
+Copy-Item $config "$config.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
+$text = Get-Content $config -Raw -Encoding UTF8
+$text = $text -replace 'sandbox\s*=\s*"[^\"]+"', 'sandbox = "unelevated"'
+[IO.File]::WriteAllText($config, $text, [Text.UTF8Encoding]::new($false))
+
+# Step 3: Loopback exemption + Portproxy
+$pkg = (Get-AppxPackage -Name '*OpenAI*').PackageFullName
+if ($pkg) { CheckNetIsolation LoopbackExempt -a -n="$pkg" }
+netsh interface portproxy delete v4tov4 listenport=7897 listenaddress=127.0.0.1
+netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 connectport=15721 connectaddress=127.0.0.1
+```
+
+Then install the Sandbox Guard to prevent recurrence:
+
+```powershell
+$skillScripts = "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts"
+if (-not (Test-Path $skillScripts)) {
+    $skillScripts = "E:\Codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts"
+}
+Copy-Item "$skillScripts\sandbox-guard.ps1" "$env:USERPROFILE\.codex\sandbox-guard.ps1" -Force
+Copy-Item "$skillScripts\sandbox-guard.vbs" "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\sandbox-guard.vbs" -Force
+Start-Process powershell.exe -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File', "$env:USERPROFILE\.codex\sandbox-guard.ps1" -WindowStyle Hidden
+```
+
+After repair, verify:
+
+```powershell
+# Check config
+Get-Content "$env:USERPROFILE\.codex\config.toml" | Select-String 'sandbox|base_url'
+# Check CC-Switch
+curl.exe -s http://127.0.0.1:15721/status --max-time 5
+# Check portproxy
+netsh interface portproxy show all
+```
+
+Expected: `sandbox = "unelevated"`, CC-Switch running with valid provider, portproxy `7897→15721` present.
+
+### If CC-Switch API test shows upstream credential expired
+
+This is a server-side issue on the third-party proxy (e.g. `llm.slashrobot.top`), NOT fixable locally:
+
+```
+upstream_status: HTTP 404
+cause: No active credentials for provider: openai
+```
+
+The user must contact the proxy service admin or switch to a different provider in CC-Switch GUI.
+
+### If CC-Switch shows provider=null after deep recovery
+
+This is normal — start Codex Desktop and CC-Switch Live Takeover will auto-initialize the provider within seconds.
