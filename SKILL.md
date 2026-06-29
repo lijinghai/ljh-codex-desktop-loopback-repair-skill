@@ -28,6 +28,8 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **Upstream credential expired (third-party proxy)** — CC-Switch is running and routing correctly, but the upstream API proxy service (e.g. `llm.slashrobot.top`) returns `HTTP 404: No active credentials for provider: openai`. This means the third-party proxy's own upstream credentials (OpenAI/Anthropic) have expired — the user's API key is valid on the proxy, but the proxy cannot forward requests. This is a **server-side issue, NOT fixable locally**. The API test through CC-Switch will return `upstream_status: HTTP 404` and `cause: No active credentials for provider: openai`. Fix: contact the proxy service admin to renew their upstream credentials, or switch to a different provider in CC-Switch GUI (e.g. configure a direct DeepSeek or other API key).
 
+**Codex Provider missing upstream base_url** - CC-Switch can keep Codex Live Takeover pointing at the local proxy (`http://127.0.0.1:15721/v1`) while the current Codex provider row in `%USERPROFILE%\.cc-switch\cc-switch.db` loses its upstream `base_url` inside `providers.settings_config.config`. The visible error is usually `Codex Provider ... 缺少 base_url 配置` or `Codex Provider missing base_url`. Fix: stop Codex and CC-Switch, back up the database, restore a full provider config from `proxy_live_backup`, `settings.common_config_codex`, or `provider_endpoints`, preserve `auth`, set `commonConfigEnabled=false`, update BOTH `providers.settings_config` and `proxy_live_backup.original_config`, reset provider health, then restart CC-Switch and verify `/v1/responses`.
+
 **Deep Recovery note** — After `DELETE FROM proxy_live_backup`, CC-Switch will show `current_provider: null` until Codex is started. CC-Switch needs Codex to launch to trigger Live Takeover, which recreates the backup and initializes the provider. Start order: 1) CC-Switch first, 2) then Codex.
 
 ## Quick Auto-Fix Flow
@@ -82,6 +84,7 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | CC-Switch `/status` shows high fail rate, `"所有供应商都失败"` | Upstream endpoint dead or credentials invalid for that endpoint | Go to Step 4e (Upstream Endpoint Repair) |
 | CC-Switch API test returns `upstream_status: HTTP 404` with `No active credentials for provider: openai` | Third-party proxy (e.g. `llm.slashrobot.top`) upstream credentials expired — server-side, NOT fixable locally | Contact proxy admin or switch provider in CC-Switch GUI |
 | CC-Switch `/status` shows `current_provider: null` after deep recovery | Normal — `proxy_live_backup` was cleaned, needs Codex launch to trigger Live Takeover | Start Codex; CC-Switch will auto-recover provider within seconds |
+| Error contains `缺少 base_url 配置` or `missing base_url` | Current CC-Switch Codex provider lost upstream `base_url` in SQLite | Go to Step 4f (Provider base_url Repair) |
 
 ### Step 3: Strategy A — Unelevated Sandbox (Primary Fix)
 
@@ -294,6 +297,41 @@ curl.exe -s http://127.0.0.1:15721/status
 
 **Prevention**: If an upstream API server is known to be unstable, configure multiple provider endpoints in CC-Switch (via its GUI) so failover can happen automatically.
 
+#### 4f. Provider base_url Repair (Codex Provider missing base_url)
+
+Use this when Codex reports `Codex Provider ... 缺少 base_url 配置` / `missing base_url`. This is not the local Codex `base_url`; it means the selected CC-Switch Codex provider lost the upstream API `base_url` inside the CC-Switch SQLite database.
+
+Run from the skill directory while Codex is stopped. Stop CC-Switch before the write so SQLite is not locked:
+
+```powershell
+Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+python .\scripts\fix_codex_provider_base_url.py --db "$env:USERPROFILE\.cc-switch\cc-switch.db"
+```
+
+If the helper cannot infer the upstream URL from `proxy_live_backup`, `settings.common_config_codex`, or `provider_endpoints`, pass it explicitly:
+
+```powershell
+python .\scripts\fix_codex_provider_base_url.py --db "$env:USERPROFILE\.cc-switch\cc-switch.db" --base-url "https://YOUR-UPSTREAM.example/v1" --model "cx/gpt-5.5"
+```
+
+What the helper does:
+- Backs up `cc-switch.db` to `cc-switch.db.bak-fix-base-url-YYYYMMDD-HHMMSS`
+- Preserves provider `auth`
+- Restores a full `[model_providers.custom]` config with `wire_api = "responses"` and upstream `base_url`
+- Sets `commonConfigEnabled=false`, `endpointAutoSelect=true`, and `apiFormat=openai_responses`
+- Updates BOTH `providers.settings_config` and `proxy_live_backup.original_config`
+- Deletes stale `provider_health` for the repaired provider
+
+After the repair, start CC-Switch, wait a few seconds, then verify forwarding:
+
+```powershell
+$body = @{ model = "cx/gpt-5.5"; input = @(@{ role = "user"; content = "hi" }); max_output_tokens = 8 } | ConvertTo-Json -Depth 5 -Compress
+Invoke-RestMethod -Uri "http://127.0.0.1:15721/v1/responses" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 20
+```
+
+Expected: HTTP 200 model response, `/status` success rate improving, and no `Codex Provider ... missing base_url` proxy error.
+
 ### Step 5: Start Codex In Order
 
 1. **First**: CC-Switch must be running with a valid provider (verified in Step 4)
@@ -490,6 +528,7 @@ netsh interface portproxy show all
 | CC-Switch provider valid but API requests time out | Upstream API server unreachable (server down, DNS failure) | Run Step 4e — check logs, test direct connectivity, switch endpoint or patch database |
 | CC-Switch shows `"所有供应商都失败"` with 0% success | Upstream endpoint unreachable or credentials invalid | Run Step 4e — update endpoint URL and API key in database + backup |
 | Requests fail after updating provider config in DB | `proxy_live_backup` overwrote manual changes on restart | Must update BOTH provider settings_config AND proxy_live_backup (Step 4e) |
+| Codex reports `Codex Provider ... 缺少 base_url 配置` | Provider `settings_config.config` was stripped and lacks upstream `base_url` | Run Step 4f; update provider config and `proxy_live_backup` together |
 
 ## CC-Switch Deep Recovery
 

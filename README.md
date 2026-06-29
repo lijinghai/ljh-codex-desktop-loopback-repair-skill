@@ -15,6 +15,7 @@
 | 3 | CC-Switch provider 丢失 / No credentials | CC-Switch 崩溃后凭据未恢复 | 等待 30s 自动恢复，或重启 CC-Switch |
 | 4 | 上游 API 全部超时 | 上游端点不可达（如 `llm.slashrobot.top` 宕机） | 切换供应商或修复数据库 |
 | 5 | CC-Switch 返回 `No active credentials for provider: openai` | **第三方代理服务端凭证过期，本地无法修复** | 联系代理管理员或换供应商 |
+| 6 | Codex Provider 缺少 base_url 配置 | CC-Switch Codex provider SQLite ???? upstream `base_url` | ?? `scripts/fix_codex_provider_base_url.py` ?? provider + `proxy_live_backup` |
 
 ## 安装
 
@@ -203,7 +204,9 @@ In a Codex session: `Use ljh-codex-desktop-loopback-repair-skill to fix my Codex
 4. **Upstream API down** — endpoint unreachable → switch provider or repair DB
 5. **Upstream credential expired** — third-party proxy returns `No active credentials for provider: openai` → ***server-side, NOT locally fixable***, contact proxy admin
 
-### License
+#Additional repair helper: `scripts/fix_codex_provider_base_url.py` repairs CC-Switch Codex provider configs that lost upstream `base_url`.
+
+## License
 
 MIT. See [LICENSE](LICENSE).
 
