@@ -349,10 +349,16 @@ First confirm the split-brain condition:
 - A direct upstream test with the key in `~/.codex/auth.json` returns 401
 - The same direct upstream test with `providers.settings_config.auth.OPENAI_API_KEY` from CC-Switch DB returns HTTP 200
 
-Then run the helper from the skill directory:
+Then run the helper from the skill directory to repair once and verify the upstream endpoint:
 
 ```bash
 python3 scripts/sync_codex_auth_from_ccswitch.py --verify
+```
+
+If `auth.json` keeps reverting to a stale placeholder after Codex or CC-Switch restarts, install the macOS LaunchAgent guard:
+
+```bash
+python3 scripts/sync_codex_auth_from_ccswitch.py --install-launch-agent --interval 20
 ```
 
 On Windows PowerShell, pass explicit paths if needed:
@@ -366,6 +372,8 @@ What the helper does:
 - Copies `providers.settings_config.auth.OPENAI_API_KEY` into `~/.codex/auth.json`
 - Backs up the old auth file to `auth.json.bak-sync-ccswitch-YYYYMMDD-HHMMSS`
 - Optionally verifies the upstream `/responses` endpoint without printing the key
+- With `--install-launch-agent`, copies itself to `~/.codex/sync-codex-auth-from-ccswitch.py` and installs `~/Library/LaunchAgents/com.lijinghai.codex-auth-sync.plist`
+- The LaunchAgent runs at login and every 20 seconds by default, keeping `auth.json` aligned with the current CC-Switch Codex provider without printing secrets; unchanged runs stay quiet to avoid log growth
 
 After syncing, restart Codex Desktop and verify with the bundled CLI:
 
@@ -373,7 +381,14 @@ After syncing, restart Codex Desktop and verify with the bundled CLI:
 /Applications/Codex.app/Contents/Resources/codex exec --skip-git-repo-check --ephemeral -C /tmp -m cx/gpt-5.5 "Reply with exactly OK."
 ```
 
-Expected: Codex returns `OK`, not repeated 401 reconnect errors.
+Also verify the guard is loaded:
+
+```bash
+launchctl list | grep codex-auth-sync
+tail -n 20 ~/.codex/codex-auth-sync.launchd.out.log
+```
+
+Expected: Codex returns `OK`, direct upstream tests return HTTP 200, and repeated Codex restarts do not bring back the 401.
 
 ### Step 5: Start Codex In Order
 
