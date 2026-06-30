@@ -16,6 +16,7 @@
 | 4 | 上游 API 全部超时 | 上游端点不可达（如 `llm.slashrobot.top` 宕机） | 切换供应商或修复数据库 |
 | 5 | CC-Switch 返回 `No active credentials for provider: openai` | **第三方代理服务端凭证过期，本地无法修复** | 联系代理管理员或换供应商 |
 | 6 | Codex Provider 缺少 base_url 配置 | CC-Switch Codex provider SQLite ???? upstream `base_url` | ?? `scripts/fix_codex_provider_base_url.py` ?? provider + `proxy_live_backup` |
+| 7 | macOS Codex App 反复重连 / 401 / plist 覆盖配置 | `com.openai.codex.plist` 的 `config_toml_base64` 覆盖 `~/.codex/config.toml`，或 CC-Switch Codex provider/backup 回滚 | `scripts/fix_macos_codex_ccswitch.py` 修复 plist、CC-Switch DB、NO_PROXY guard 并验证 `/responses` |
 
 ## 安装
 
@@ -46,6 +47,19 @@ start-repair-web.bat
 ```
 
 AI 会自动诊断并执行修复。
+
+### macOS 一键修复
+
+在 Mac 上 Codex App 报 “正在重新连接”、`401 Unauthorized`、继续打到 `https://llm.slashrobot.top/v1/responses`，或 `~/.codex/config.toml` 明明正确但 GUI 不生效时，运行：
+
+```bash
+python3 scripts/fix_macos_codex_ccswitch.py \
+  --relay-base-url http://100.109.173.92:18081/v1 \
+  --local-base-url http://127.0.0.1:15721/v1 \
+  --model cx/gpt-5.5
+```
+
+脚本会备份并修复 Codex App plist、`~/.codex/config.toml`、CC-Switch provider/endpoint/backup/common config、`NO_PROXY` LaunchAgent 和 plist guard，然后重启 CC-Switch/Codex 并做一次小请求验证。
 
 ### 方式三：手动紧凑修复（管理员 PowerShell）
 
@@ -165,7 +179,7 @@ netsh interface portproxy show all
 
 ## English
 
-A Codex Skill for diagnosing and repairing Codex Desktop loopback proxy failures on Windows.
+A Codex Skill for diagnosing and repairing Codex Desktop loopback proxy failures on Windows and macOS.
 
 ### Quick Fix (Admin PowerShell)
 

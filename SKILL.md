@@ -1,7 +1,7 @@
 ---
 # 算个文科生吧，联系方式WX：RabbitRobot2025
 name: ljh-codex-desktop-loopback-repair-skill
-description: Diagnose and repair Codex Desktop for Windows reconnecting, stream disconnected, 413 Payload Too Large, or local API proxy failures. Fixes AppContainer loopback isolation, Codex sandbox WFP port blocking, CC-Switch Live Takeover config conflicts, CC-Switch credential loss and crash recovery, sandbox users, and netsh portproxy cleanup. 修复 Windows 上 Codex Desktop 一直重连、流断开、413 请求体过大、本地 127.0.0.1 代理不可达等问题。优先使用 unelevated 沙箱策略，简单可靠。
+description: Diagnose and repair Codex Desktop for Windows or macOS reconnecting, stream disconnected, 413 Payload Too Large, 401 Unauthorized, missing base_url, or local API proxy failures. Fixes Windows AppContainer loopback isolation, Codex sandbox WFP port blocking, CC-Switch Live Takeover config conflicts, credential loss and crash recovery, sandbox users, netsh portproxy cleanup, and macOS Codex.app config_toml_base64 plist overrides, NO_PROXY/Tailscale relay routing, and CC-Switch SQLite provider/backup repair. 修复 Codex Desktop 一直重连、流断开、413、401、base_url 缺失、本地 127.0.0.1 代理不可达等问题。
 ---
 
 # Codex Desktop Loopback Repair
@@ -32,9 +32,24 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **Codex auth.json stale API key (macOS/CLI)** - Codex can report `unexpected status 401 Unauthorized: {"error":"API key required for remote API access"}, url: https://.../v1/responses` even when `~/.codex/config.toml` points at `http://127.0.0.1:15721/v1` and CC-Switch curl tests pass. In this case, compare direct upstream requests using `~/.codex/auth.json` versus the current CC-Switch Codex provider key. If the CC-Switch provider key returns HTTP 200 but `auth.json` returns 401, back up `~/.codex/auth.json`, sync it from `providers.settings_config.auth.OPENAI_API_KEY`, restart Codex, and verify with `codex exec`.
 
+**macOS Codex.app plist override + CC-Switch relay repair** - Codex.app can store `config_toml_base64` in `~/Library/Preferences/com.openai.codex.plist`, which overrides `~/.codex/config.toml`. If the GUI still reconnects after `config.toml` is correct, decode this plist key and verify the active provider points at `http://127.0.0.1:15721/v1`. Use `scripts/fix_macos_codex_ccswitch.py` to back up and rewrite `config.toml`, the plist override, CC-Switch `providers.settings_config`, `provider_endpoints`, `proxy_live_backup`, `settings.common_config_codex`, and `provider_health`; it also installs LaunchAgents for `NO_PROXY` and a plist guard, restarts CC-Switch/Codex, and smoke-tests `/v1/responses`.
+
 **Deep Recovery note** — After `DELETE FROM proxy_live_backup`, CC-Switch will show `current_provider: null` until Codex is started. CC-Switch needs Codex to launch to trigger Live Takeover, which recreates the backup and initializes the provider. Start order: 1) CC-Switch first, 2) then Codex.
 
 ## Quick Auto-Fix Flow
+
+### macOS One-Shot Repair
+
+Run this on the Mac when Codex.app shows reconnecting, 401 Unauthorized, stale `https://llm.slashrobot.top/v1/responses`, or the plist override keeps winning over `~/.codex/config.toml`:
+
+```bash
+python3 scripts/fix_macos_codex_ccswitch.py \
+  --relay-base-url http://100.109.173.92:18081/v1 \
+  --local-base-url http://127.0.0.1:15721/v1 \
+  --model cx/gpt-5.5
+```
+
+Expected output: JSON with `ok: true`, a CC-Switch smoke response status `200`, `last_error: null`, and `success_rate: 100.0`. Verify with `/Applications/Codex.app/Contents/Resources/codex doctor --json` and a small `codex exec` prompt.
 
 When invoked, follow this priority order. Stop at the first step that resolves the issue:
 

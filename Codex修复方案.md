@@ -7,8 +7,34 @@
 > 2. `413 Payload Too Large` — 会话上下文超过 CC-Switch 10 MB 请求体限制
 > 3. CC-Switch 凭证丢失 — 崩溃后 provider 变 null 或报 "No credentials"
 > 4. 上游 API 服务器宕机 — provider 有效但请求全部超时/失败
+> 5. macOS Codex App plist 覆盖 — `com.openai.codex.plist` 的 `config_toml_base64` 把 GUI 强制指向旧上游
 >
 > **修复优先级**：先修沙箱（策略 A），再查 CC-Switch 健康（含上游连通性），最后处理 413。
+
+---
+
+## macOS Codex.app + CC-Switch relay 修复
+
+macOS 版 Codex App 除了读取 `~/.codex/config.toml`，还可能从 `~/Library/Preferences/com.openai.codex.plist` 的 `config_toml_base64` 读取一份隐藏 TOML。这个隐藏配置会覆盖文件配置，导致 GUI 继续打到 `https://llm.slashrobot.top/v1/responses`，即使 `config.toml` 已经改成 `http://127.0.0.1:15721/v1`。
+
+一键修复脚本：
+
+```bash
+python3 scripts/fix_macos_codex_ccswitch.py \
+  --relay-base-url http://100.109.173.92:18081/v1 \
+  --local-base-url http://127.0.0.1:15721/v1 \
+  --model cx/gpt-5.5
+```
+
+脚本会备份并修复：
+
+- `~/.codex/config.toml`
+- `~/Library/Preferences/com.openai.codex.plist` 的 `config_toml_base64`
+- `~/.cc-switch/cc-switch.db` 里的 `providers`、`provider_endpoints`、`proxy_live_backup`、`settings.common_config_codex`、`provider_health`
+- `NO_PROXY` LaunchAgent，避免 Tailscale relay 被系统代理劫持
+- plist guard LaunchAgent，防止 Codex App 或 CC-Switch 后续把配置改回旧上游
+
+验证标准：CC-Switch `/status` 的 `last_error` 为 `null`，小请求 `/v1/responses` 返回 HTTP 200，`/Applications/Codex.app/Contents/Resources/codex doctor --json` 的 provider reachability 为 `ok`，`codex exec` 小提示词返回 `OK`。
 
 ---
 
