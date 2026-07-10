@@ -149,7 +149,7 @@ def normalize_config(template: str, model: str, base_url: str) -> str:
     cfg = ensure_section(cfg, "model_providers")
     cfg = set_section_key(cfg, "model_providers.custom", "name", toml_quote(provider_name))
     cfg = set_section_key(cfg, "model_providers.custom", "wire_api", toml_quote("responses"))
-    cfg = set_section_key(cfg, "model_providers.custom", "requires_openai_auth", "false")
+    cfg = set_section_key(cfg, "model_providers.custom", "requires_openai_auth", "true")
     cfg = set_section_key(cfg, "model_providers.custom", "base_url", toml_quote(base_url))
     cfg = set_section_key(cfg, "windows", "sandbox", toml_quote("unelevated"))
     return cfg

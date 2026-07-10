@@ -1,4 +1,3 @@
-<!-- 算个文科生吧，联系方式WX：RabbitRobot2025 -->
 
 # ljh-codex-desktop-loopback-repair-skill
 
@@ -13,7 +12,7 @@
 | 1 | 一直 Reconnecting / stream disconnected | CC-Switch 重启后把 `sandbox` 写回 `elevated`，WFP 防火墙阻断 15721 | 切到 `unelevated` + 安装守护 |
 | 2 | 413 Payload Too Large | 会话上下文超过上游 10 MB 限制 | 归档 session，开新会话 |
 | 3 | CC-Switch provider 丢失 / No credentials | CC-Switch 崩溃后凭据未恢复 | 等待 30s 自动恢复，或重启 CC-Switch |
-| 4 | 上游 API 全部超时 | 上游端点不可达（如 `llm.slashrobot.top` 宕机） | 切换供应商或修复数据库 |
+| 4 | 上游 API 全部超时 | 上游端点不可达（如 `api-proxy.example.com` 宕机） | 切换供应商或修复数据库 |
 | 5 | CC-Switch 返回 `No active credentials for provider: openai` | **第三方代理服务端凭证过期，本地无法修复** | 联系代理管理员或换供应商 |
 | 6 | Codex Provider 缺少 base_url 配置 | CC-Switch Codex provider SQLite ???? upstream `base_url` | ?? `scripts/fix_codex_provider_base_url.py` ?? provider + `proxy_live_backup` |
 | 7 | macOS Codex App 反复重连 / 401 / plist 覆盖配置 | `com.openai.codex.plist` 的 `config_toml_base64` 覆盖 `~/.codex/config.toml`，或 CC-Switch Codex provider/backup 回滚 | `scripts/fix_macos_codex_ccswitch.py` 修复 plist、CC-Switch DB、NO_PROXY guard 并验证 `/responses` |
@@ -50,11 +49,11 @@ AI 会自动诊断并执行修复。
 
 ### macOS 一键修复
 
-在 Mac 上 Codex App 报 “正在重新连接”、`401 Unauthorized`、继续打到 `https://llm.slashrobot.top/v1/responses`，或 `~/.codex/config.toml` 明明正确但 GUI 不生效时，运行：
+在 Mac 上 Codex App 报 “正在重新连接”、`401 Unauthorized`、继续打到旧上游地址，或 `~/.codex/config.toml` 明明正确但 GUI 不生效时，运行：
 
 ```bash
 python3 scripts/fix_macos_codex_ccswitch.py \
-  --relay-base-url http://100.109.173.92:18081/v1 \
+  --relay-base-url http://RELAY_HOST:18081/v1 \
   --local-base-url http://127.0.0.1:15721/v1 \
   --model cx/gpt-5.5
 ```
@@ -223,5 +222,3 @@ In a Codex session: `Use ljh-codex-desktop-loopback-repair-skill to fix my Codex
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-Author: 算个文科生吧 | lijinghailjh@163.com | WeChat: RabbitRobot2025

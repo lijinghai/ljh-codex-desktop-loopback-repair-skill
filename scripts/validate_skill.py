@@ -1,8 +1,4 @@
-﻿#!/usr/bin/env python3
-# Author: 算个文科生吧
-# Contact: lijinghailjh@163.com
-# Project: ljh_codex-desktop-loopback-repair_skill
-# 算个文科生吧，联系方式WX：RabbitRobot2025
+#!/usr/bin/env python3
 """Lightweight validation for the ljh-codex-desktop-loopback-repair-skill skill."""
 
 from __future__ import annotations
@@ -79,5 +75,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 

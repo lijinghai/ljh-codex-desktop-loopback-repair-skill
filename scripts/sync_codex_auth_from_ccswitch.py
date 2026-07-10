@@ -167,7 +167,7 @@ def install_launch_agent(args: argparse.Namespace) -> dict:
     except Exception:
         pass
 
-    label = "com.lijinghai.codex-auth-sync"
+    label = "com.codex.ccswitch-auth-sync"
     launch_dir = Path.home() / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True, exist_ok=True)
     plist_path = launch_dir / f"{label}.plist"

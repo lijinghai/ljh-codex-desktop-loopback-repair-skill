@@ -1,7 +1,6 @@
 # Codex Sandbox Guard v3 — 纯轮询守护，简单可靠
 # CC-Switch Live Takeover 在启动时会把 sandbox 改回 "elevated"
 # 此脚本每10秒检查一次，发现后立即修复
-# 算个文科生吧，联系方式WX：RabbitRobot2025
 
 $configPath = "$env:USERPROFILE\.codex\config.toml"
 $logPath = "$env:USERPROFILE\.codex\sandbox-guard.log"

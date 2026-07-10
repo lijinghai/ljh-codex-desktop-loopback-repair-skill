@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 
 
 DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:15721/v1"
-DEFAULT_RELAY_BASE_URL = "http://100.109.173.92:18081/v1"
+DEFAULT_RELAY_BASE_URL = ""
 DEFAULT_MODEL = "cx/gpt-5.5"
 
 
@@ -347,10 +347,10 @@ def load_agent(home: Path, label: str, plist_path: Path, dry_run: bool) -> list[
 
 def install_no_proxy_agent(home: Path, relay_base_url: str, dry_run: bool) -> dict[str, object]:
     host = host_from_url(relay_base_url)
-    values = [v for v in [host, "100.64.0.0/10", "localhost", "127.0.0.1", "llm.slashrobot.top"] if v]
+    values = [v for v in [host, "100.64.0.0/10", "localhost", "127.0.0.1"] if v]
     no_proxy = ",".join(dict.fromkeys(values))
     script = home / ".codex" / "set-codex-no-proxy-env.sh"
-    plist = home / "Library" / "LaunchAgents" / "com.lijinghai.codex-no-proxy-env.plist"
+    plist = home / "Library" / "LaunchAgents" / "com.codex.no-proxy-env.plist"
     script_text = f'''#!/bin/zsh
 VALUE="{no_proxy}"
 /bin/launchctl setenv NO_PROXY "$VALUE"
@@ -358,7 +358,7 @@ VALUE="{no_proxy}"
 exit 0
 '''
     plist_text = plist_xml(
-        "com.lijinghai.codex-no-proxy-env",
+        "com.codex.no-proxy-env",
         [str(script)],
         home / ".codex" / "codex-no-proxy-env.log",
         home / ".codex" / "codex-no-proxy-env.err.log",
@@ -371,13 +371,13 @@ exit 0
         script.chmod(0o755)
         plist.write_text(plist_text, encoding="utf-8")
         run([str(script)], timeout=10)
-    launch = load_agent(home, "com.lijinghai.codex-no-proxy-env", plist, dry_run)
+    launch = load_agent(home, "com.codex.no-proxy-env", plist, dry_run)
     return {"script": str(script), "plist": str(plist), "NO_PROXY": no_proxy, "launchctl": launch}
 
 
 def install_plist_guard(home: Path, local_config: str, dry_run: bool) -> dict[str, object]:
     script = home / ".codex" / "guard-codex-plist-local-proxy.py"
-    plist = home / "Library" / "LaunchAgents" / "com.lijinghai.codex-plist-proxy-guard.plist"
+    plist = home / "Library" / "LaunchAgents" / "com.codex.plist-proxy-guard.plist"
     guard_source = f'''#!/usr/bin/env python3
 import base64, pathlib, plistlib, time
 home = pathlib.Path.home()
@@ -405,7 +405,7 @@ if changed:
         f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " fixed codex local proxy config\\n")
 '''
     plist_text = plist_xml(
-        "com.lijinghai.codex-plist-proxy-guard",
+        "com.codex.plist-proxy-guard",
         ["/usr/bin/python3", str(script)],
         home / ".codex" / "codex-plist-proxy-guard.out.log",
         home / ".codex" / "codex-plist-proxy-guard.err.log",
@@ -418,7 +418,7 @@ if changed:
         script.chmod(0o755)
         plist.write_text(plist_text, encoding="utf-8")
         run(["/usr/bin/python3", str(script)], timeout=10)
-    launch = load_agent(home, "com.lijinghai.codex-plist-proxy-guard", plist, dry_run)
+    launch = load_agent(home, "com.codex.plist-proxy-guard", plist, dry_run)
     return {"script": str(script), "plist": str(plist), "launchctl": launch}
 
 
@@ -470,7 +470,7 @@ def compact_status() -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local-base-url", default=DEFAULT_LOCAL_BASE_URL)
-    parser.add_argument("--relay-base-url", default=DEFAULT_RELAY_BASE_URL)
+    parser.add_argument("--relay-base-url", default=DEFAULT_RELAY_BASE_URL, required=not bool(DEFAULT_RELAY_BASE_URL))
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--db", default="")
     parser.add_argument("--dry-run", action="store_true")

@@ -1,7 +1,6 @@
 ---
-# 算个文科生吧，联系方式WX：RabbitRobot2025
 name: ljh-codex-desktop-loopback-repair-skill
-description: Diagnose and repair Codex Desktop for Windows or macOS reconnecting, stream disconnected, 413 Payload Too Large, 401 Unauthorized, missing base_url, or local API proxy failures. Fixes Windows AppContainer loopback isolation, Codex sandbox WFP port blocking, CC-Switch Live Takeover config conflicts, credential loss and crash recovery, sandbox users, netsh portproxy cleanup, and macOS Codex.app config_toml_base64 plist overrides, NO_PROXY/Tailscale relay routing, and CC-Switch SQLite provider/backup repair. 修复 Codex Desktop 一直重连、流断开、413、401、base_url 缺失、本地 127.0.0.1 代理不可达等问题。
+description: Diagnose and repair Codex Desktop for Windows or macOS reconnecting, stream disconnected, 413 Payload Too Large, 401 Unauthorized, missing base_url, local API proxy failures, or CC-Switch Codex provider misconfiguration. Fixes Windows AppContainer loopback isolation, Codex sandbox WFP port blocking, CC-Switch Live Takeover config conflicts, credential/provider loss, stale model/base_url/API key settings, sandbox users, netsh portproxy cleanup, SSH-triggered CC-Switch startup issues, and macOS Codex.app config_toml_base64 plist overrides, NO_PROXY relay routing, and CC-Switch SQLite provider/backup repair. 修复 Codex Desktop 一直重连、流断开、413、401、base_url 缺失、本地 127.0.0.1 代理不可达、CC-Switch provider/key/model 配置错误等问题。
 ---
 
 # Codex Desktop Loopback Repair
@@ -24,9 +23,13 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 **HTTP_PROXY kills CC-Switch outbound** — If `HTTP_PROXY` or `HTTPS_PROXY` environment variable is set to `http://127.0.0.1:XXXX`, CC-Switch routes ALL outbound API requests through that proxy. If nothing is listening there, CC-Switch fails with `"连接失败"`. Curl and browsers are unaffected (they don't auto-use these vars), making this very hard to diagnose. Fix: delete the env var.
 
-**Upstream API server can be down** — CC-Switch can be perfectly healthy (running, valid provider, no credential errors) but ALL requests fail because the upstream API server (e.g. `llm4.slashrobot.top`) is unreachable. The `/status` endpoint shows 0% success rate with `"所有供应商都失败"` or `"请求超时"`. CC-Switch's `proxy_live_backup` table stores a snapshot of the last working config — on restart, CC-Switch restores auth tokens from this backup, overwriting manual database edits. Fix: switch to a working provider endpoint, or update both the provider's `settings_config` AND the `proxy_live_backup` in CC-Switch's SQLite database.
+**Upstream API server can be down** — CC-Switch can be perfectly healthy (running, valid provider, no credential errors) but ALL requests fail because the upstream API server (e.g. `api-proxy.example.com`) is unreachable. The `/status` endpoint shows 0% success rate with `"所有供应商都失败"` or `"请求超时"`. CC-Switch's `proxy_live_backup` table stores a snapshot of the last working config — on restart, CC-Switch restores auth tokens from this backup, overwriting manual database edits. Fix: switch to a working provider endpoint, or update both the provider's `settings_config` AND the `proxy_live_backup` in CC-Switch's SQLite database.
 
-**Upstream credential expired (third-party proxy)** — CC-Switch is running and routing correctly, but the upstream API proxy service (e.g. `llm.slashrobot.top`) returns `HTTP 404: No active credentials for provider: openai`. This means the third-party proxy's own upstream credentials (OpenAI/Anthropic) have expired — the user's API key is valid on the proxy, but the proxy cannot forward requests. This is a **server-side issue, NOT fixable locally**. The API test through CC-Switch will return `upstream_status: HTTP 404` and `cause: No active credentials for provider: openai`. Fix: contact the proxy service admin to renew their upstream credentials, or switch to a different provider in CC-Switch GUI (e.g. configure a direct DeepSeek or other API key).
+**Upstream credential expired (third-party proxy)** — CC-Switch is running and routing correctly, but the upstream API proxy service (e.g. `api-proxy.example.com`) returns `HTTP 404: No active credentials for provider: openai`. This means the third-party proxy's own upstream credentials (OpenAI/Anthropic) have expired — the user's API key is valid on the proxy, but the proxy cannot forward requests. This is a **server-side issue, NOT fixable locally**. The API test through CC-Switch will return `upstream_status: HTTP 404` and `cause: No active credentials for provider: openai`. Fix: contact the proxy service admin to renew their upstream credentials, or switch to a different provider in CC-Switch GUI (e.g. configure a direct DeepSeek or other API key).
+
+**Provider-scoped model mismatch can mimic credential loss** — Some upstream proxies return `No active credentials for provider: openai` when Codex sends a bare model such as `gpt-5.5`, even though the user's API key is valid. Always query upstream `/v1/models`; if it lists `cx/gpt-5.5`, configure CC-Switch/Codex with exactly `cx/gpt-5.5`. If a user provides a known key and base URL, read `references/ccswitch-provider-repair.md` and use `scripts/configure_ccswitch_codex_provider.py`.
+
+**CC-Switch started from SSH may not persist** — Starting `cc-switch.exe` from a non-interactive SSH session can leave `127.0.0.1:15721` reachable only until the session ends, or the process may exit without logs. Use `scripts/start-ccswitch-interactive-task.ps1` to register and start CC-Switch under the logged-in Windows user's interactive token.
 
 **Codex Provider missing upstream base_url** - CC-Switch can keep Codex Live Takeover pointing at the local proxy (`http://127.0.0.1:15721/v1`) while the current Codex provider row in `%USERPROFILE%\.cc-switch\cc-switch.db` loses its upstream `base_url` inside `providers.settings_config.config`. The visible error is usually `Codex Provider ... 缺少 base_url 配置` or `Codex Provider missing base_url`. Fix: stop Codex and CC-Switch, back up the database, restore a full provider config from `proxy_live_backup`, `settings.common_config_codex`, or `provider_endpoints`, preserve `auth`, set `commonConfigEnabled=false`, update BOTH `providers.settings_config` and `proxy_live_backup.original_config`, reset provider health, then restart CC-Switch and verify `/v1/responses`.
 
@@ -40,11 +43,11 @@ This creates a deadlock: elevated sandbox blocks 15721 → CC-Switch forces base
 
 ### macOS One-Shot Repair
 
-Run this on the Mac when Codex.app shows reconnecting, 401 Unauthorized, stale `https://llm.slashrobot.top/v1/responses`, or the plist override keeps winning over `~/.codex/config.toml`:
+Run this on the Mac when Codex.app shows reconnecting, 401 Unauthorized, a stale upstream URL, or the plist override keeps winning over `~/.codex/config.toml`:
 
 ```bash
 python3 scripts/fix_macos_codex_ccswitch.py \
-  --relay-base-url http://100.109.173.92:18081/v1 \
+  --relay-base-url http://RELAY_HOST:18081/v1 \
   --local-base-url http://127.0.0.1:15721/v1 \
   --model cx/gpt-5.5
 ```
@@ -99,7 +102,7 @@ netsh advfirewall firewall show rule name="codex_sandbox_offline_block_loopback_
 | CC-Switch reports `"连接失败"` but curl can reach upstream | `HTTP_PROXY` env var poisoning outbound | Go to Step 4d (Remove HTTP_PROXY) |
 | CC-Switch `/status` valid provider but API test times out | Upstream API endpoint unreachable (server down) | Go to Step 4e (Upstream Endpoint Repair) |
 | CC-Switch `/status` shows high fail rate, `"所有供应商都失败"` | Upstream endpoint dead or credentials invalid for that endpoint | Go to Step 4e (Upstream Endpoint Repair) |
-| CC-Switch API test returns `upstream_status: HTTP 404` with `No active credentials for provider: openai` | Third-party proxy (e.g. `llm.slashrobot.top`) upstream credentials expired — server-side, NOT fixable locally | Contact proxy admin or switch provider in CC-Switch GUI |
+| CC-Switch API test returns `upstream_status: HTTP 404` with `No active credentials for provider: openai` | Either third-party proxy upstream credentials expired OR Codex is using the wrong provider-scoped model | First test upstream `/v1/models` and `/v1/responses` with the provided key; if direct works with `cx/...`, go to Step 4h |
 | CC-Switch `/status` shows `current_provider: null` after deep recovery | Normal — `proxy_live_backup` was cleaned, needs Codex launch to trigger Live Takeover | Start Codex; CC-Switch will auto-recover provider within seconds |
 | Error contains `缺少 base_url 配置` or `missing base_url` | Current CC-Switch Codex provider lost upstream `base_url` in SQLite | Go to Step 4f (Provider base_url Repair) |
 | Error contains `API key required for remote API access` and URL is the upstream `https://.../v1/responses` | `~/.codex/auth.json` may contain a stale key while CC-Switch DB has a working provider key | Go to Step 4g (Sync Codex auth.json from CC-Switch) |
@@ -355,7 +358,7 @@ Expected: HTTP 200 model response, `/status` success rate improving, and no `Cod
 Use this when Codex reports:
 
 ```text
-unexpected status 401 Unauthorized: {"error":"API key required for remote API access"}, url: https://llm.slashrobot.top/v1/responses
+unexpected status 401 Unauthorized: {"error":"API key required for remote API access"}, url: https://api-proxy.example.com/v1/responses
 ```
 
 First confirm the split-brain condition:
@@ -387,7 +390,7 @@ What the helper does:
 - Copies `providers.settings_config.auth.OPENAI_API_KEY` into `~/.codex/auth.json`
 - Backs up the old auth file to `auth.json.bak-sync-ccswitch-YYYYMMDD-HHMMSS`
 - Optionally verifies the upstream `/responses` endpoint without printing the key
-- With `--install-launch-agent`, copies itself to `~/.codex/sync-codex-auth-from-ccswitch.py` and installs `~/Library/LaunchAgents/com.lijinghai.codex-auth-sync.plist`
+- With `--install-launch-agent`, copies itself to `~/.codex/sync-codex-auth-from-ccswitch.py` and installs `~/Library/LaunchAgents/com.codex.ccswitch-auth-sync.plist`
 - The LaunchAgent runs at login and every 20 seconds by default, keeping `auth.json` aligned with the current CC-Switch Codex provider without printing secrets; unchanged runs stay quiet to avoid log growth
 
 After syncing, restart Codex Desktop and verify with the bundled CLI:
@@ -404,6 +407,35 @@ tail -n 20 ~/.codex/codex-auth-sync.launchd.out.log
 ```
 
 Expected: Codex returns `OK`, direct upstream tests return HTTP 200, and repeated Codex restarts do not bring back the 401.
+
+#### 4h. Configure Known CC-Switch Codex Provider Key/URL/Model
+
+Use this when the user provides a working API key and upstream URL, or when `/v1/models` succeeds but CC-Switch returns `No active credentials for provider: openai` / `model_not_found`.
+
+Before declaring the upstream server broken, read `references/ccswitch-provider-repair.md` and verify the exact model id from `/v1/models`. Many proxies expose provider-scoped models such as `cx/gpt-5.5`; using bare `gpt-5.5` can fail even with a valid key.
+
+Run from the skill directory while Codex and CC-Switch are stopped:
+
+```powershell
+Get-Process | Where-Object { $_.ProcessName -like '*codex*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process cc-switch -ErrorAction SilentlyContinue | Stop-Process -Force
+
+$env:CODEX_PROVIDER_KEY = '<API_KEY>'
+python .\scripts\configure_ccswitch_codex_provider.py `
+    --db "$env:USERPROFILE\.cc-switch\cc-switch.db" `
+    --base-url 'https://YOUR-UPSTREAM.example/v1' `
+    --model 'cx/gpt-5.5' `
+    --require-api-key
+Remove-Item Env:CODEX_PROVIDER_KEY
+```
+
+Then start CC-Switch through the interactive scheduled task, because SSH-launched GUI processes may not survive session end:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-ccswitch-interactive-task.ps1 -Restart
+```
+
+Verify `http://127.0.0.1:15721/v1/responses` with the same exact model id. Expected: HTTP 200, output text such as `OK`, `/status` shows `current_provider` and successful requests.
 
 ### Step 5: Start Codex In Order
 
@@ -549,7 +581,7 @@ curl.exe -s http://127.0.0.1:15721/status --max-time 5 | Select-Object -Last 1
 # 3. CC-Switch forwards requests
 Write-Host "=== API Test ===" 
 $body = @{
-    model = "gpt-5.5"
+    model = "cx/gpt-5.5"
     input = @(@{ role = "user"; content = "hi" })
     max_output_tokens = 10
 } | ConvertTo-Json -Depth 5 -Compress
@@ -571,7 +603,7 @@ netsh interface portproxy show all
 | sandbox | `"unelevated"` |
 | base_url | `http://127.0.0.1:15721/v1` |
 | CC-Switch `/status` | `"running":true`, provider not null |
-| API test | Model response via 7897 or 15721, no `proxy_error` |
+| API test | Model response via 7897 or 15721 using the exact upstream model id, no `proxy_error` |
 | Loopback | Codex package listed |
 | Portproxy | `7897 → 15721` present |
 | Codex behavior | No reconnecting, no 413 |
@@ -602,6 +634,8 @@ netsh interface portproxy show all
 | CC-Switch shows `"所有供应商都失败"` with 0% success | Upstream endpoint unreachable or credentials invalid | Run Step 4e — update endpoint URL and API key in database + backup |
 | Requests fail after updating provider config in DB | `proxy_live_backup` overwrote manual changes on restart | Must update BOTH provider settings_config AND proxy_live_backup (Step 4e) |
 | Codex reports `Codex Provider ... 缺少 base_url 配置` | Provider `settings_config.config` was stripped and lacks upstream `base_url` | Run Step 4f; update provider config and `proxy_live_backup` together |
+| Direct upstream `/v1/models` works, but CC-Switch `/v1/responses` returns `No active credentials for provider: openai` | Wrong model id, usually bare `gpt-5.5` instead of provider-scoped `cx/gpt-5.5` | Run Step 4h and configure the exact model from `/v1/models` |
+| CC-Switch works during SSH command but `15721` is closed in the next SSH command | `cc-switch.exe` was started inside a non-interactive SSH session and exited | Run `scripts/start-ccswitch-interactive-task.ps1 -Restart` |
 
 ## CC-Switch Deep Recovery
 
@@ -685,13 +719,7 @@ netsh interface portproxy add v4tov4 listenport=7897 listenaddress=127.0.0.1 con
 Then install the Sandbox Guard to prevent recurrence:
 
 ```powershell
-$skillScripts = "$env:USERPROFILE\.codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts"
-if (-not (Test-Path $skillScripts)) {
-    $skillScripts = "E:\Codex\skills\ljh-codex-desktop-loopback-repair-skill\scripts"
-}
-Copy-Item "$skillScripts\sandbox-guard.ps1" "$env:USERPROFILE\.codex\sandbox-guard.ps1" -Force
-Copy-Item "$skillScripts\sandbox-guard.vbs" "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\sandbox-guard.vbs" -Force
-Start-Process powershell.exe -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File', "$env:USERPROFILE\.codex\sandbox-guard.ps1" -WindowStyle Hidden
+powershell -ExecutionPolicy Bypass -File .\scripts\install-sandbox-guard-task.ps1
 ```
 
 After repair, verify:
@@ -709,14 +737,14 @@ Expected: `sandbox = "unelevated"`, CC-Switch running with valid provider, portp
 
 ### If CC-Switch API test shows upstream credential expired
 
-This is a server-side issue on the third-party proxy (e.g. `llm.slashrobot.top`), NOT fixable locally:
+First verify the provided key directly against upstream `/v1/models` and `/v1/responses` with the exact model returned by `/v1/models`. If direct upstream also returns this error, it is a server-side issue on the third-party proxy (e.g. `api-proxy.example.com`), NOT fixable locally:
 
 ```
 upstream_status: HTTP 404
 cause: No active credentials for provider: openai
 ```
 
-The user must contact the proxy service admin or switch to a different provider in CC-Switch GUI.
+If direct upstream works, it is local CC-Switch configuration: run Step 4h and configure the correct provider-scoped model, key, and endpoint.
 
 ### If CC-Switch shows provider=null after deep recovery
 

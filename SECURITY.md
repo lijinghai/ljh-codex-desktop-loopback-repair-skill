@@ -1,10 +1,3 @@
-﻿<!--
-Author: 算个文科生吧
-Contact: lijinghailjh@163.com
-Project: ljh_codex-desktop-loopback-repair_skill
-算个文科生吧，联系方式WX：RabbitRobot2025
--->
-
 # Security Policy
 
 ## Supported Versions
@@ -34,4 +27,3 @@ Project: ljh_codex-desktop-loopback-repair_skill
 - 停止 Codex Desktop 进程
 
 不要在 issue 或 PR 中提交真实 API key、代理密钥、完整用户目录隐私信息或敏感日志。
-

@@ -1,4 +1,3 @@
-<!-- 算个文科生吧，联系方式WX：RabbitRobot2025 -->
 
 # Codex Desktop 修复方案
 
@@ -15,13 +14,13 @@
 
 ## macOS Codex.app + CC-Switch relay 修复
 
-macOS 版 Codex App 除了读取 `~/.codex/config.toml`，还可能从 `~/Library/Preferences/com.openai.codex.plist` 的 `config_toml_base64` 读取一份隐藏 TOML。这个隐藏配置会覆盖文件配置，导致 GUI 继续打到 `https://llm.slashrobot.top/v1/responses`，即使 `config.toml` 已经改成 `http://127.0.0.1:15721/v1`。
+macOS 版 Codex App 除了读取 `~/.codex/config.toml`，还可能从 `~/Library/Preferences/com.openai.codex.plist` 的 `config_toml_base64` 读取一份隐藏 TOML。这个隐藏配置会覆盖文件配置，导致 GUI 继续打到旧上游地址，即使 `config.toml` 已经改成 `http://127.0.0.1:15721/v1`。
 
 一键修复脚本：
 
 ```bash
 python3 scripts/fix_macos_codex_ccswitch.py \
-  --relay-base-url http://100.109.173.92:18081/v1 \
+  --relay-base-url http://RELAY_HOST:18081/v1 \
   --local-base-url http://127.0.0.1:15721/v1 \
   --model cx/gpt-5.5
 ```
@@ -70,7 +69,7 @@ netsh interface portproxy show all
 Copy-Item "$env:USERPROFILE\.codex\config.toml" "$env:USERPROFILE\.codex\config.toml.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
 ```
 
-编辑 `C:\Users\lijinghai\.codex\config.toml`，**只改 `sandbox`，不要动 `base_url`**（CC-Switch 会接管它）：
+编辑 `$env:USERPROFILE\.codex\config.toml`，**只改 `sandbox`，不要动 `base_url`**（CC-Switch 会接管它）：
 
 ```toml
 [windows]
@@ -393,7 +392,7 @@ netsh interface portproxy show all
 | CC-Switch provider 有效但请求全超时 | 上游 API 服务器宕机 | 切换 supplier 或修复数据库（见 CC-Switch 上游 API 端点修复） |
 | CC-Switch 显示 "所有供应商都失败" | 上游 endpoint 不可达或凭证无效 | 更新 endpoint URL 和 API key，同时更新 backup |
 | 手动改了 DB 但重启后又被覆盖 | `proxy_live_backup` 覆盖了手动修改 | 必须同时更新 provider 表和 proxy_live_backup 表 |
-| CC-Switch API 返回 `upstream_status: HTTP 404` + `No active credentials for provider: openai` | 第三方代理（如 `llm.slashrobot.top`）的上游凭证过期 — 服务端问题，本地无法修复 | 联系代理服务管理员，或在 CC-Switch GUI 切换供应商 |
+| CC-Switch API 返回 `upstream_status: HTTP 404` + `No active credentials for provider: openai` | 第三方代理（如 `api-proxy.example.com`）的上游凭证过期 — 服务端问题，本地无法修复 | 联系代理服务管理员，或在 CC-Switch GUI 切换供应商 |
 
 ---
 
@@ -436,7 +435,7 @@ upstream_status: HTTP 404
 cause: No active credentials for provider: openai
 ```
 
-这是第三方代理（如 `llm.slashrobot.top`）服务端问题，**本地无法修复**。需要联系代理管理员或切换供应商。
+这是第三方代理（如 `api-proxy.example.com`）服务端问题，**本地无法修复**。需要联系代理管理员或切换供应商。
 
 ### 如果深度恢复后 CC-Switch 显示 provider=null
 

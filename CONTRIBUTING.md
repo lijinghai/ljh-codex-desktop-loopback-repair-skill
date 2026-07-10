@@ -1,10 +1,3 @@
-﻿<!--
-Author: 算个文科生吧
-Contact: lijinghailjh@163.com
-Project: ljh_codex-desktop-loopback-repair_skill
-算个文科生吧，联系方式WX：RabbitRobot2025
--->
-
 # Contributing
 
 感谢你考虑贡献这个 Codex Skill。
@@ -32,4 +25,3 @@ python .\scripts\validate_skill.py .
 - 使用当前机器发现到的真实值，不盲目套用固定值。
 - 优先做最小必要修改。
 - 对需要管理员权限或会改变系统状态的命令保持明确提示。
-
