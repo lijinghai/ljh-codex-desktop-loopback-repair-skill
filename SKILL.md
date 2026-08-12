@@ -429,6 +429,19 @@ python .\scripts\configure_ccswitch_codex_provider.py `
 Remove-Item Env:CODEX_PROVIDER_KEY
 ```
 
+If Python is unavailable but Node.js 24+ is installed, use the lightweight model-prefix helper:
+
+```powershell
+$env:CODEX_PROVIDER_KEY = '<API_KEY>'
+node .\scripts\fix_model_prefix.mjs `
+    --db "$env:USERPROFILE\.cc-switch\cc-switch.db" `
+    --base-url 'https://YOUR-UPSTREAM.example/v1' `
+    --model 'cx/gpt-5.5'
+Remove-Item Env:CODEX_PROVIDER_KEY
+```
+
+The Node.js helper is intentionally narrow: it patches the selected/current Codex provider, `provider_endpoints`, `proxy_live_backup`, `settings.common_config_codex`, `provider_health`, and local `config.toml` model without printing the API key. It does not change local `config.toml` `base_url` unless `--config-base-url` is passed, because CC-Switch Live Takeover normally manages that value. Prefer `configure_ccswitch_codex_provider.py` when Python is available and full provider normalization is needed.
+
 Then start CC-Switch through the interactive scheduled task, because SSH-launched GUI processes may not survive session end:
 
 ```powershell

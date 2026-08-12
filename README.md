@@ -13,8 +13,8 @@
 | 2 | 413 Payload Too Large | 会话上下文超过上游 10 MB 限制 | 归档 session，开新会话 |
 | 3 | CC-Switch provider 丢失 / No credentials | CC-Switch 崩溃后凭据未恢复 | 等待 30s 自动恢复，或重启 CC-Switch |
 | 4 | 上游 API 全部超时 | 上游端点不可达（如 `api-proxy.example.com` 宕机） | 切换供应商或修复数据库 |
-| 5 | CC-Switch 返回 `No active credentials for provider: openai` | **第三方代理服务端凭证过期，本地无法修复** | 联系代理管理员或换供应商 |
-| 6 | Codex Provider 缺少 base_url 配置 | CC-Switch Codex provider SQLite ???? upstream `base_url` | ?? `scripts/fix_codex_provider_base_url.py` ?? provider + `proxy_live_backup` |
+| 5 | CC-Switch 返回 `No active credentials for provider: openai` | 上游凭证过期，或模型缺少供应商前缀（如应为 `cx/gpt-5.5`） | 先测 `/v1/models`，若前缀模型可用则修复模型配置 |
+| 6 | Codex Provider 缺少 base_url 配置 | CC-Switch Codex provider SQLite 丢失 upstream `base_url` | 用 `scripts/fix_codex_provider_base_url.py` 修复 provider + `proxy_live_backup` |
 | 7 | macOS Codex App 反复重连 / 401 / plist 覆盖配置 | `com.openai.codex.plist` 的 `config_toml_base64` 覆盖 `~/.codex/config.toml`，或 CC-Switch Codex provider/backup 回滚 | `scripts/fix_macos_codex_ccswitch.py` 修复 plist、CC-Switch DB、NO_PROXY guard 并验证 `/responses` |
 
 ## 安装
@@ -170,6 +170,7 @@ netsh interface portproxy show all
 │   ├── sandbox-guard.ps1     # Sandbox 守护脚本
 │   ├── sandbox-guard.vbs     # 守护启动器（隐藏窗口）
 │   ├── start-codex.bat       # 一键启动器
+│   ├── fix_model_prefix.mjs  # Node 24+ 模型前缀快速修复
 │   └── validate_skill.py     # Skill 校验
 ├── web/
 │   └── repair.html       # Web 控制台前端
@@ -215,9 +216,12 @@ In a Codex session: `Use ljh-codex-desktop-loopback-repair-skill to fix my Codex
 2. **413 Payload Too Large** — context > 10 MB → archive sessions
 3. **CC-Switch crash** — provider becomes null or "No credentials" → wait 30s or restart
 4. **Upstream API down** — endpoint unreachable → switch provider or repair DB
-5. **Upstream credential expired** — third-party proxy returns `No active credentials for provider: openai` → ***server-side, NOT locally fixable***, contact proxy admin
+5. **Credential or model-prefix mismatch** — `No active credentials for provider: openai` can be server-side, but first test `/v1/models`; if a provider-scoped model such as `cx/gpt-5.5` works, repair the model config locally
 
-#Additional repair helper: `scripts/fix_codex_provider_base_url.py` repairs CC-Switch Codex provider configs that lost upstream `base_url`.
+### Additional Repair Helpers
+
+- `scripts/fix_codex_provider_base_url.py` repairs CC-Switch Codex provider configs that lost upstream `base_url`.
+- `scripts/fix_model_prefix.mjs` is a lightweight Node.js 24+ helper for machines without Python. It updates the selected/current Codex provider, `provider_endpoints`, `proxy_live_backup`, `settings.common_config_codex`, `provider_health`, and local `config.toml` model. It does not change local `config.toml` `base_url` unless `--config-base-url` is passed.
 
 ## License
 

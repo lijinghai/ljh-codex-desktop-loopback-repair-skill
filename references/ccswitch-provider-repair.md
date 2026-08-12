@@ -54,6 +54,21 @@ Remove-Item Env:CODEX_PROVIDER_KEY
 
 The helper backs up `cc-switch.db`, updates only the selected/current Codex provider, replaces the provider endpoint, updates `proxy_live_backup`, updates `settings.common_config_codex` when present, and resets provider health. Its JSON output reports whether a key was present, but never prints the key.
 
+## Node.js Quick Helper
+
+If Python is unavailable on the target machine but Node.js 24+ is installed, use the lightweight helper to repair a known model prefix and upstream URL:
+
+```powershell
+$env:CODEX_PROVIDER_KEY = '<API_KEY>'
+node .\scripts\fix_model_prefix.mjs `
+    --db "$env:USERPROFILE\.cc-switch\cc-switch.db" `
+    --base-url 'https://YOUR-UPSTREAM.example/v1' `
+    --model 'cx/gpt-5.5'
+Remove-Item Env:CODEX_PROVIDER_KEY
+```
+
+`configure_ccswitch_codex_provider.py` remains preferred for full provider normalization. `fix_model_prefix.mjs` is the quick path for machines that already have Node 24+ but lack Python; it updates the current/selected Codex provider, `provider_endpoints`, `proxy_live_backup`, `settings.common_config_codex`, `provider_health`, and local `config.toml` model without printing the API key. It leaves local `config.toml` `base_url` alone unless `--config-base-url` is passed, because CC-Switch Live Takeover normally manages that value.
+
 ## Start CC-Switch Reliably From SSH
 
 After DB repair, start CC-Switch through the logged-in user's interactive token:
